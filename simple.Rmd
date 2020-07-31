@@ -12,8 +12,6 @@ output:
 ```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=TRUE, cache=TRUE,
                       warning=FALSE, message=FALSE)
-## la('flowcy')
-figdir = "~/Dropbox/research/usc/flow-cytometry/figures"
 library(ggplot2)
 library(covidcast)
 library(tidyverse)
@@ -24,7 +22,11 @@ library(tidyverse)
 First, download some data (two signals, and case counts).
 
 ```{r}
-load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
+load_all("/home/shyun/repos/covidcast/R-packages/covidcast") ## Sorry for the
+                                                             ## absolute path,
+                                                             ## you need to load
+                                                             ## the package
+                                                             ## directly
 
 ## Use case:
 data_sources = c("doctor-visits",
