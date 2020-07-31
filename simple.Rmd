@@ -1,0 +1,104 @@
+---
+title: Predicting hotspots one week ahead
+author: Justin, Natalia 
+date: Jul 31, 2020
+output:
+  html_document:
+    code_folding: show
+    toc: true
+    toc_float: true
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=TRUE, cache=TRUE,
+                      warning=FALSE, message=FALSE)
+## la('flowcy')
+figdir = "~/Dropbox/research/usc/flow-cytometry/figures"
+library(ggplot2)
+library(covidcast)
+library(tidyverse)
+```
+
+## Simple first try
+
+First, download some data (two signals, and case counts).
+
+```{r}
+load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
+
+## Use case:
+data_sources = c("doctor-visits",
+                "fb-survey",
+                "indicator-combination")
+                ## "hospital-admissions",
+                ## "ght")
+signals = c("smoothed_adj_cli",
+           "smoothed_cli",
+           "confirmed_7dav_incidence_num")
+           ## "smoothed_adj_covid19",
+           ## "smoothed_search")
+signals = data.frame(data_sources = data_sources, signals = signals)
+suppressMessages({
+mat = covidcast_signals(signals,
+                        start_day = "2020-04-01", end_day = "2020-05-07")
+})
+```
+
+Then, make this into wide format so that every row is a unique time and geo-value.
+
+```{r}
+mat = mat %>%  select(geo_value, time_value, data_source, value)
+mat_wide = mat %>% pivot_wider(names_from = c("data_source"),values_from="value")
+mat_wide %>% print()
+```
+
+Now, we form a response vector whose values are 0 or 1 based on whether a 25% increase occurred in 1 day.
+
+```{r}
+## Helper function for adding a new response column to every submatrix by geo-value.
+onelag = function(mt, numlag){
+  numlag = 1
+  case = mt$"indicator-combination"
+  mt$lagdif = c(rep(NA, numlag),
+                sapply((1+numlag):length(case), function(ii){
+                  inds1 = ii
+                  inds2 = ii-1
+                  ((mean(case[inds1]) - mean(case[inds2])) / mean(case[inds2]) ) > 1.25
+                }))
+  mt
+}
+
+## Now, transform a set of wide
+mat_new = mat_wide %>% ##subset(geo_value %in% c("01000", "01001")) %>% 
+  group_by(geo_value) %>%
+  group_modify(onelag)
+
+## Isolate attention to a few regions
+geos = mat_new %>% select(geo_value) %>% unique()  %>% unlist()
+mat_small = mat_new %>% subset(geo_value %in% geos[2:10])
+
+## Plot the surrounding points? Clunky code hereon..
+inds = which(mat_small$lagdif == 1)
+inds = sapply(inds, function(ind)ind + (-20):20) %>% as.numeric()
+inds = inds[inds>0]
+
+myplot <- function(mat, dummy){
+  plot(y=mat$"indicator-combination", x=mat$time_value, type='l' )
+  which(mat$lagdif) %>% print()
+  abline(v=which(mat$lagdif))
+}
+
+mat_small = mat_small %>% rename(case="indicator-combination")
+
+mat_small %>%
+  group_by(geo_value) %>%
+  ggplot(aes(x = time_value, y = case)) +
+  geom_line(colour = "black") + facet_wrap(~geo_value)
+```
+
+## Next up:
+- Every row of the data is a unique geo/time; make the time variable correspond to the time of the response.
+- Better response variable indicating a hotspot; 25 percent increase against a 3 day average.
+- Other idea: response is whether 25% increase in cases occurs (0/1) in k=3 weeks? <-- vary k?
+- Covariates are various other features. <-- add more things.
+- Actually fit a logistic model.
