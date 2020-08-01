@@ -1,0 +1,151 @@
+---
+title: Identifying hot spots
+author: Justin, Natalia, Alex
+date: Jul 31, 2020
+output:
+  html_document:
+    code_folding: show
+    toc: true
+    toc_float: true
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=TRUE, cache=TRUE,
+                      warning=FALSE, message=FALSE)
+library(ggplot2)
+library(covidcast)
+library(tidyverse)
+library(dplyr)
+load_all("/home/shyun/repos/covidcast/R-packages/covidcast") ## Load the covidcast pacakge
+```
+
+## Simple first try
+
+
+Download data.
+
+```{r}
+## Use case:
+data_sources = c("fb-survey", "fb-survey", "indicator-combination")
+                ## "hospital-admissions",
+                ## "ght")
+signals = c("smoothed_hh_cmnty_cli", "smoothed_cli", "confirmed_7dav_incidence_num")
+           ## "smoothed_adj_covid19",
+           ## "smoothed_search")
+signals = data.frame(data_sources = data_sources, signals = signals)
+suppressMessages({
+  mat = covidcast_signals(signals,
+                          start_day = "2020-06-01", end_day = "2020-07-31")
+})
+mat = mat %>%
+  as_tibble() %>%
+  dplyr::select(geo = geo_value, time =time_value, val = value, signal = signal)
+
+## ## Pick a few geo values for illustration
+## mat = mat_orig %>% subset(geo %in% c("01010", "01020"))
+## geos = (mat_orig$geo %>% unique() )[10:12]
+
+## ## Make the three geo regions' plots
+## mat %>% subset(geo %in% geos) %>%
+##   group_by(geo) %>%
+##   ggplot(aes(x = time, y = val, col=signal))  + geom_line(size=1) + geom_point(size=2) +
+##   facet_wrap(~geo, scales = 'free')
+```
+
+Now pick geo values by the highest rises in case counts from June to July.
+
+```{r}
+## Helper to calculate rise from June to July
+howmuchrise <- function(val, time){
+ mean(val[time >= "2020-7-26"]) - mean(val[time <= "2020-6-06"])
+}
+
+## Sort all the rises
+rises = mat %>%
+  group_by(geo) %>% 
+  subset(signal == "confirmed_7dav_incidence_num") %>% 
+  dplyr::summarise(rise = howmuchrise(val, time)) %>%
+  arrange(desc(rise))
+
+## See the numerical summary
+rises %>% dplyr::select(rise) %>% unlist() %>% summary()
+
+## Histogram
+ggplot(rises, aes(x=rise)) + geom_histogram() %>%
+  ggtitle("Distribution of mean(last week of July) - mean(first week of June)") +
+  theme(plot.title = element_text(size = 20, face = "bold"))
+
+## Sorted values as a line plot
+ggplot(cbind(ind = 1:nrow(rises), rises), aes(x=ind, y=rise)) + geom_line() +
+  geom_vline(xintercept=20, col='red', size=1) +
+  ggtitle("Sorted mean(last week of July) - mean(first week of June)") +
+  theme(plot.title = element_text(size = 20, face = "bold"))
+
+## Pick the 20 highest rising counties
+topn = 40
+geos = rises %>%  slice_head(n = topn) %>% dplyr::select(geo) %>% unlist()
+
+## library(genlasso)
+loess_smooth <- function(val){
+  dat = data.frame(ind=1:nrow(val), val)
+
+  predict(loess(val~ind, dat, span=0.3), newx = 1:nrow(val))
+
+  ## ## cubic trend filter
+  ## a = genlasso::trendfilter(val, ord=1,maxsteps=)
+  ## cv = genlasso::cv.trendfilter(a)
+  ## suppressMessages({predict(a, lambda=cv$lambda.1se)$fit})
+}
+
+library(maps)
+data(county.fips)
+conv = county.fips
+conv = conv %>% rename(geo=fips)
+conv = conv %>% as_tibble %>% mutate(geo=sprintf("%05d", geo))
+mat = mat %>% full_join(conv)
+
+totalcensus::convert_fips_to_names(
+  FIPs,
+  states = NULL,
+  geo_header = "STATE",
+  in_states = NULL
+)
+
+## Make the three geo regions' plots
+mat %>% subset(geo %in% geos) %>%
+  group_by(geo, signal) %>% 
+  ## group_by(signal) %>% 
+  mutate(val=scale(val)) %>%
+  ## mutate(val2=loess_smooth(val)) %>%
+  ## mutate(val2=c(NA,diff(val2))*4)%>%
+  ungroup() %>%
+  subset(signal != "smoothed_cli") %>%
+  group_by(polyname) %>%
+  ggplot(aes(x = time, y = val, col=signal))  +
+  geom_line(aes(x=time, y=val), size=2) +
+  geom_point(aes(x=time, y=val), size=1) +
+  geom_hline(yintercept=0, col='grey', size=1) +
+  facet_wrap(~polyname, scales = 'free') 
+```
+
+
+
+**Ryan said:** For getting examples of the two questions that I wrote above (basically,
+positive examples, and negative examples), let me suggest we proceed in this
+way, a bit more automatically:
+
+- Identify the top say $20$ or so counties that had the biggest percent increase
+(absolute, or relative?) in case incidence rate, when you compare the first week
+of June to the last week of July. **Done**
+
+- For each, just look at the plots, and see how many count as positive examples,
+and negative examples. **Done**
+
+- I guess you can just consider the FB community signal for now (forget the FB
+individual one). **Done**
+
+- When you make these plots, there’s some ambiguity/trickiness here in the
+scaling: depending on how you scale each signal, you could be interpreting
+things visually differently.  I’d think concretely about how strongly this is
+affecting things. **Addressing this next**
+
