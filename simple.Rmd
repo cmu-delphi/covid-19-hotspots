@@ -15,6 +15,9 @@ knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=TRUE, cache=TR
 library(ggplot2)
 library(covidcast)
 library(tidyverse)
+library(devtools)
+library(glmnet)
+source("helpers.r")
 ```
 
 ## Simple first try
@@ -22,7 +25,12 @@ library(tidyverse)
 First, download some data (two signals, and case counts).
 
 ```{r}
-load_all("/home/shyun/repos/covidcast/R-packages/covidcast") ## Sorry for the
+#load_all("/home/shyun/repos/covidcast/R-packages/covidcast") ## Sorry for the
+                                                             ## absolute path,
+                                                             ## you need to load
+                                                             ## the package
+                                                             ## directly
+load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast") ## Sorry for the
                                                              ## absolute path,
                                                              ## you need to load
                                                              ## the package
@@ -42,7 +50,7 @@ signals = c("smoothed_adj_cli",
 signals = data.frame(data_sources = data_sources, signals = signals)
 suppressMessages({
 mat = covidcast_signals(signals,
-                        start_day = "2020-04-01", end_day = "2020-05-07")
+                        start_day = "2020-06-01", end_day = "2020-07-31")
 })
 ```
 
@@ -50,13 +58,14 @@ Then, make this into wide format so that every row is a unique time and geo-valu
 
 ```{r}
 mat = mat %>%  select(geo_value, time_value, data_source, value)
+### treat NA here
 mat_wide = mat %>% pivot_wider(names_from = c("data_source"),values_from="value")
 mat_wide %>% print()
 ```
 
 Now, we form a response vector whose values are 0 or 1 based on whether a 25% increase occurred in 1 day.
 
-```{r}
+```{r, eval=FALSE}
 ## Helper function for adding a new response column to every submatrix by geo-value.
 onelag = function(mt, numlag){
   numlag = 1
@@ -97,6 +106,70 @@ mat_small %>%
   ggplot(aes(x = time_value, y = case)) +
   geom_line(colour = "black") + facet_wrap(~geo_value)
 ```
+
+
+## Fitting models!
+
+### only past response
+```{r}
+lags = 7
+n_ahead = 14
+data_sources = c("indicator-combination")
+signals = c("confirmed_7dav_incidence_prop")
+signals = data.frame(data_sources = data_sources, signals = signals)
+#suppressMessages({
+mat = covidcast_signals(signals,
+                        start_day = "2020-05-01", end_day = "2020-08-04")
+#})
+mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
+mat <- add_NAval_missing_dates(mat)
+
+predictions_onlylaggedresponse <- fit_predict_models(mat, lags, n_ahead, response = "confirmed_7dav_incidence_prop")
+
+plt_onlylaggedresponse <- predictions_onlylaggedresponse %>% reshape2::melt(id.vars = c("geo_value", "time_value", "resp")) %>% 
+  ggplot() + 
+  geom_roc(aes(d = resp, m = value, color = variable), n.cuts = 0) + 
+  theme_bw() + 
+  theme(legend.position = "bottom", legend.title = element_blank()) +
+  geom_abline(slope = 1, intercept = 0)
+plt_onlylaggedresponse
+calc_auc(plt_onlylaggedresponse)
+```
+
+### past response + facebook signals
+```{r}
+lags = 7
+n_ahead = 14
+data_sources = c("indicator-combination", 
+                 "fb-survey", 
+                 "fb-survey", 
+                 "fb-survey", 
+                 "fb-survey")
+signals = c("confirmed_7dav_incidence_prop", 
+            "smoothed_cli", 
+            "smoothed_nohh_cmnty_cli", 
+            "smoothed_wcli", 
+            "smoothed_hh_cmnty_cli")
+signals = data.frame(data_sources = data_sources, signals = signals)
+#suppressMessages({
+mat = covidcast_signals(signals,
+                        start_day = "2020-05-01", end_day = "2020-08-04")
+#})
+mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
+mat <- add_NAval_missing_dates(mat)
+
+predictions_laggedandfacebook <- fit_predict_models(mat, lags, n_ahead, "confirmed_7dav_incidence_prop")
+
+plt_laggedandfacebook <- predictions_laggedandfacebook %>% reshape2::melt(id.vars = c("geo_value", "time_value", "resp")) %>% 
+  ggplot() + 
+  geom_roc(aes(d = resp, m = value, color = variable), n.cuts = 0) + 
+  theme_bw(base_size = 14) + 
+  theme(legend.position = "bottom", legend.title = element_blank()) +
+  geom_abline(slope = 1, intercept = 0)
+plt_laggedandfacebook
+calc_auc(plt_laggedandfacebook)
+```
+
 
 ## Next up:
 - Every row of the data is a unique geo/time; make the time variable correspond to the time of the response.

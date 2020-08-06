@@ -34,8 +34,8 @@ add_NAval_missing_dates <- function(df){
 ##' @param name variable name that will be used for the lagged features
 ##' @return dataframe with lagged features for one geo_value
 lagged_features_onegeo <- function(df, lags, name = "feature"){
-  signal <- df$val
-  timestamp <- df$time
+  signal <- df$value
+  timestamp <- df$time_value
   
   ## if you want more lags than available points, returns empty dataframe
   len <- nrow(df)
@@ -49,12 +49,12 @@ lagged_features_onegeo <- function(df, lags, name = "feature"){
   ## TODO if there's NA in signal, treat it BEFORE creating lagged matrix. needs helper function. 
   ## it's reasonable to interpolate the TS as long as there are not many sequential missing obs
   
-  out <- data.frame(time = timestamp[(lags+1):len])
+  out <- data.frame(time_value = timestamp[(lags+1):len])
   ## adding lagged feature from t-0, t-1, t-2, until t-lags
   for(i in 0:lags){
     out <- suppressMessages(bind_cols(out, signal[(lags+1-i):(len-i)]))
   }
-  names(out) = c("time", paste(name, "_lag", 0:lags, sep = ""))
+  names(out) = c("time_value", paste(name, "_lag", 0:lags, sep = ""))
   
   return(out)
 }
@@ -66,8 +66,8 @@ lagged_features_onegeo <- function(df, lags, name = "feature"){
 ##' @param fn_response logic for computing response, based on a provided response vector whose all points will be used for this computation
 ##' @return inputted dataframe with addedmresp colum, which is a binary variable indicating if there is a hotspot n days ahead of the date variable
 response_onegeo <- function(df, n_ahead, fn_response = response_diff, ...){
-  signal <- df$val
-  timestamp <- df$time
+  signal <- df$value
+  timestamp <- df$time_value
   
   ## we can only determine a hotspot n_ahead days if that day is available
   len <- nrow(df)
@@ -79,7 +79,7 @@ response_onegeo <- function(df, n_ahead, fn_response = response_diff, ...){
   ## TODO if there's NA in signal, treat it BEFORE creating response. needs helper function. 
   ## it's reasonable to interpolate the TS as long as there are not many sequential missing obs
   
-  out <- data.frame(time = timestamp[1:(len-n_ahead+1)])
+  out <- data.frame(time_value = timestamp[1:(len-n_ahead+1)])
   out$resp <- NA
   ## for the points that have n_ahead points available, compute hotspot based on the values available 
   ## between time and time+n_ahead using the logic provided through fn_response
@@ -123,14 +123,15 @@ ready_to_model <- function(mat, lags, n_ahead, response = "confirmed_7dav_incide
   ## construct lagged features for all available signals, including lagged responses
   ## removes all NAs 
   # TODO deal with NAs
-  features <- mat %>% plyr::ddply(c("signal", "geo"), lagged_features_onegeo, lags = lags) %>% na.omit()
+  features <- mat %>% plyr::ddply(c("signal", "data_source", "geo_value"), lagged_features_onegeo, lags = lags) %>% na.omit()
   ## construct hotspot indicator in the resp variable
-  response <- mat %>% filter(signal == response) %>% plyr::ddply(c("signal", "geo"), response_onegeo, n_ahead = n_ahead) %>% na.omit()
+  responses <- mat %>% filter(signal == response) %>% plyr::ddply(c("signal", "data_source", "geo_value"), response_onegeo, n_ahead = n_ahead) %>% na.omit()
   ## transform the dataframe in a wide format, with one row per geo_value and date
-  names_to_pivot <- colnames(features %>% select(-geo, -time, -signal))
-  features <- pivot_wider(features, id_cols = c("geo", "time"), names_from = c("signal"), values_from = all_of(names_to_pivot))
+  names_to_pivot <- colnames(features %>% select(-geo_value, -time_value, -signal, -data_source))
+  features <- pivot_wider(features, id_cols = c("geo_value", "time_value"), names_from = c("signal", "data_source"), 
+                          values_from = all_of(names_to_pivot)) %>% ungroup
   ## join features and response
-  mat_to_model <- inner_join(features, response %>% select(-signal), by = c("geo", "time"))
+  mat_to_model <- inner_join(features, responses %>% select(-signal, -data_source), by = c("geo_value", "time_value"))
   ## TODO add census features
   return(mat_to_model)
 }
@@ -142,10 +143,10 @@ ready_to_model <- function(mat, lags, n_ahead, response = "confirmed_7dav_incide
 ##' @param df_tomodel dataset ready to model, with all lagged covariates and binary response
 ##' @param pct_test percentage of the points that will be in the test set
 sample_split_date <- function(df_tomodel, pct_test=0.3){
-  df_tomodel <- df_tomodel %>% arrange(desc(time)) %>% na.omit() # TODO: treat NA's properly. Maybe Dmitry's smoother?
-  start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"time"]
-  df_test <- df_tomodel %>% filter(time >= start_test_date$time[1])
-  df_train <- df_tomodel %>% filter(time < start_test_date$time[1])
+  df_tomodel <- df_tomodel %>% arrange(desc(time_value)) %>% na.omit() # TODO: treat NA's properly. Maybe Dmitry's smoother?
+  start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"time_value"]
+  df_test <- df_tomodel %>% filter(time_value >= start_test_date$time_value[1])
+  df_train <- df_tomodel %>% filter(time_value < start_test_date$time_value[1])
   return(list(df_test = df_test, df_train = df_train))
 }
 
@@ -155,29 +156,30 @@ sample_split_date <- function(df_tomodel, pct_test=0.3){
 ##' @param mat output from api call
 ##' @param lags number of past values to include in the data frame; for time t, dataframe will have in one row X_t until X_{t-lag}
 ##' @param n_ahead number of days ahead that response will be computed
-fit_predict_models <- function(mat, lags, n_ahead){
+fit_predict_models <- function(mat, lags, n_ahead, response = "confirmed_7dav_incidence_num"){
   cat("Creating lagged variables and binary response...\n")
-  df_model <- ready_to_model(mat, lags, n_ahead)
+  df_model <- ready_to_model(mat, lags, n_ahead, response)
   cat("Done! \nNow fitting models:\n")
   splitted <- sample_split_date(df_model, pct_test=0.3)
   df_train <- splitted$df_train
   df_test <- splitted$df_test
   
-  predictions <- df_test %>% select(geo, time, resp)
+  predictions <- df_test %>% select(geo_value, time_value, resp)
   
   cat("\tFitting LASSO...")
-  fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo, -time, -resp)), y = df_train$resp, family = "binomial", alpha = 1)
-  fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo, -time, -resp)), 
+  fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)), y = df_train$resp, family = "binomial", alpha = 1)
+  fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)), 
                       y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.1se, alpha = 1)
-  predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = predict(fit_lasso, newx = as.matrix(df_test %>% select(-geo, -time, -resp)), type = "response")[,1]
+  predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = 
+    predict(fit_lasso, newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
   
   cat(" Done!\n\tFitting Ridge...")
   ### more models here!!! SVM, xgboost... add predictions as a col to predictions
   ## eg ridge:
-  fit_ridge <- cv.glmnet(x = as.matrix(df_train %>% select(-geo, -time, -resp)), y = df_train$resp, family = "binomial", alpha = 0)
-  fit_ridge <- glmnet(x = as.matrix(df_train %>% select(-geo, -time, -resp)), 
+  fit_ridge <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)), y = df_train$resp, family = "binomial", alpha = 0)
+  fit_ridge <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)), 
                       y = df_train$resp, family = "binomial", lambda = fit_ridge$lambda.1se, alpha = 0)
-  predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = predict(fit_ridge, newx = as.matrix(df_test %>% select(-geo, -time, -resp)), type = "response")[,1]
+  predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = predict(fit_ridge, newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
   cat(" Done!\n")
   return(predictions)
 }
