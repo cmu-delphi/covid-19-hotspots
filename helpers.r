@@ -84,7 +84,7 @@ response_onegeo <- function(df, n_ahead, fn_response = response_diff, ...){
   ## for the points that have n_ahead points available, compute hotspot based on the values available 
   ## between time and time+n_ahead using the logic provided through fn_response
   for(i in 1:(len-n_ahead+1)){
-    out$resp[i] <- fn_response(signal[i:(i+n_ahead)], ...)
+    out$resp[i] <- fn_response(signal[1:(i+n_ahead)], i, ...)
   }
   
   return(out)
@@ -92,21 +92,13 @@ response_onegeo <- function(df, n_ahead, fn_response = response_diff, ...){
 
 ##' considers increase if there is a 25% increase
 ##' 
-##' @param x vector of values that will be used to determine hotspot
+##' @param x vector of values that will be used to determine hotspot, from 1 until i+n_ahead
+##' @param i position of the vector x that is "today"; everything from i+1:forward is not known as features
 ##' @param threshold threshold on increase val to determine hotspot
 ##' @return 1 if hotspot, 0 if not
-response_diff <- function(x, threshold = .25){
+response_diff <- function(x, i, threshold = .25){
   len = length(x)
-  ifelse((x[len]-x[1])/x[1]>1.25, 1, 0)
-}
-
-##' considers increase if there is any 25% increase in the provided interval
-##' 
-##' @param x vector of values that will be used to determine hotspot
-##' @param threshold threshold on increase val to determine hotspot
-##' @return 1 if hotspot, 0 if not
-response_maxdiff <- function(x, threshold = .25){
-  ifelse((max(x)-min(x))(which.max(x)>=which.min(x))/min(x)>1.25, 1, 0)
+  ifelse((x[len]-x[i])/x[i]>1.25, 1, 0)
 }
 
 ## TODO
