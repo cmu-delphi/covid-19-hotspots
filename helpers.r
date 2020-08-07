@@ -150,6 +150,22 @@ sample_split_date <- function(df_tomodel, pct_test=0.3){
   return(list(df_test = df_test, df_train = df_train))
 }
 
+#' Make |foldid| argument for covariate matrix |x| and |nfold|-fold
+#' cross-validation; makes nfold consecutive time blocks
+#' @param x covariate matrix
+#' @param nfold nfold
+make_foldid <- function(x, nfold){
+  ## inds = round(seq(from = 0, to = nrow(df_train), length=nfold))
+  ## indlist = lapply(1:(length(inds)-1), function(ii) (inds[ii]+1):inds[ii+1])
+  ## vec = rep(NA,nrow(x))
+  ## for(ii in 1:length(indlist)){vec[indlist[[ii]]] = ii}
+
+  vec = rep(1:nfold, each=ceiling(nrow(x)/nfold))
+  vec = vec[1:nrow(x)]
+
+  return(vec)
+}
+
 ##' fit models and produce test set predictions
 ##' currently: lasso, ridge
 ##' 
@@ -167,7 +183,9 @@ fit_predict_models <- function(mat, lags, n_ahead, response = "confirmed_7dav_in
   predictions <- df_test %>% select(geo_value, time_value, resp)
   
   cat("\tFitting LASSO...")
-  fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)), y = df_train$resp, family = "binomial", alpha = 1)
+  nfold = 10
+  foldid <- make_foldid(df_train, nfold)
+  fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)), y = df_train$resp, family = "binomial", alpha = 1, foldid = foldid, nfold=nfold)
   fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)), 
                       y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.1se, alpha = 1)
   predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = 
@@ -176,7 +194,9 @@ fit_predict_models <- function(mat, lags, n_ahead, response = "confirmed_7dav_in
   cat(" Done!\n\tFitting Ridge...")
   ### more models here!!! SVM, xgboost... add predictions as a col to predictions
   ## eg ridge:
-  fit_ridge <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)), y = df_train$resp, family = "binomial", alpha = 0)
+  nfold = 10
+  foldid <- make_foldid(df_train, nfold)
+  fit_ridge <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)), y = df_train$resp, family = "binomial", alpha = 0, foldid=foldid, nfold=nfold)
   fit_ridge <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)), 
                       y = df_train$resp, family = "binomial", lambda = fit_ridge$lambda.1se, alpha = 0)
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = predict(fit_ridge, newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
