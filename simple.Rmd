@@ -1,5 +1,5 @@
 ---
-title: Predicting hotspots one week ahead
+title: Predicting hotspots
 author: Justin, Natalia 
 date: Jul 31, 2020
 output:
@@ -15,8 +15,10 @@ knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=TRUE, cache=TR
 library(ggplot2)
 library(covidcast)
 library(tidyverse)
+library(tidyr) ## for pivot_wider() ?
 library(devtools)
 library(glmnet)
+library(plotROC) ## For helpers.r
 source("helpers.r")
 ```
 
@@ -124,6 +126,7 @@ mat = covidcast_signals(signals,
 mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
 mat <- add_NAval_missing_dates(mat)
 
+source("helpers.r")
 predictions_onlylaggedresponse <- fit_predict_models(mat, lags, n_ahead, response = "confirmed_7dav_incidence_prop")
 
 plt_onlylaggedresponse <- predictions_onlylaggedresponse %>% reshape2::melt(id.vars = c("geo_value", "time_value", "resp")) %>% 
@@ -134,11 +137,19 @@ plt_onlylaggedresponse <- predictions_onlylaggedresponse %>% reshape2::melt(id.v
   geom_abline(slope = 1, intercept = 0)
 plt_onlylaggedresponse
 calc_auc(plt_onlylaggedresponse)
+
+auc = calc_auc(plt_onlylaggedresponse)
+
+plt_onlylaggedresponse <- plt_onlylaggedresponse +
+  annotate("text", x=0.1, y=0.9, label= paste("Lasso AUC",  auc[1,"AUC"] %>% round(3))) +
+  annotate("text", x=0.1, y=0.8, label= paste("Ridge AUC",  auc[2,"AUC"] %>% round(3)))
+ggsave(plt_onlylaggedresponse, file="./roc_laggedonly.pdf")
+
 ```
 
 ### past response + facebook signals
 ```{r}
-lags = 7
+lags = 7 
 n_ahead = 14
 data_sources = c("indicator-combination", 
                  "fb-survey", 
@@ -155,18 +166,27 @@ signals = data.frame(data_sources = data_sources, signals = signals)
 mat = covidcast_signals(signals,
                         start_day = "2020-05-01", end_day = "2020-08-04")
 #})
-mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
-mat <- add_NAval_missing_dates(mat)
+mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
+mat <- add_NAval_missing_dates(mat) ## SH: This is going away?
 
 predictions_laggedandfacebook <- fit_predict_models(mat, lags, n_ahead, "confirmed_7dav_incidence_prop")
 
-plt_laggedandfacebook <- predictions_laggedandfacebook %>% reshape2::melt(id.vars = c("geo_value", "time_value", "resp")) %>% 
+plt_laggedandfacebook <- predictions_laggedandfacebook %>%
+  reshape2::melt(id.vars = c("geo_value", "time_value", "resp")) %>% 
   ggplot() + 
   geom_roc(aes(d = resp, m = value, color = variable), n.cuts = 0) + 
   theme_bw(base_size = 14) + 
   theme(legend.position = "bottom", legend.title = element_blank()) +
-  geom_abline(slope = 1, intercept = 0)
+  geom_abline(slope = 1, intercept = 0) 
+
+auc = calc_auc(plt_laggedandfacebook)
+
+plt_laggedandfacebook <- plt_laggedandfacebook +
+  annotate("text", x=0.1, y=0.9, label= paste("Lasso AUC",  auc[1,"AUC"] %>% round(3))) +
+  annotate("text", x=0.1, y=0.8, label= paste("Ridge AUC",  auc[2,"AUC"] %>% round(3)))
+
 plt_laggedandfacebook
+ggsave(plt_laggedandfacebook, file="./roc_lagged_and_fb.pdf")
 calc_auc(plt_laggedandfacebook)
 ```
 

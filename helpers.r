@@ -144,6 +144,22 @@ sample_split_date <- function(df_tomodel, pct_test=0.3){
   return(list(df_test = df_test, df_train = df_train))
 }
 
+#' Make |foldid| argument for covariate matrix |x| and |nfold|-fold
+#' cross-validation; makes nfold consecutive time blocks
+#' @param x covariate matrix
+#' @param nfold nfold
+make_foldid <- function(x, nfold){
+  ## inds = round(seq(from = 0, to = nrow(df_train), length=nfold))
+  ## indlist = lapply(1:(length(inds)-1), function(ii) (inds[ii]+1):inds[ii+1])
+  ## vec = rep(NA,nrow(x))
+  ## for(ii in 1:length(indlist)){vec[indlist[[ii]]] = ii}
+  
+  vec = rep(1:nfold, each=ceiling(nrow(x)/nfold))
+  vec = vec[1:nrow(x)]
+  
+  return(vec)
+}
+
 ##' fit models and produce test set predictions
 ##' currently: lasso, ridge
 ##' 
@@ -160,22 +176,115 @@ fit_predict_models <- function(mat, lags, n_ahead, response = "confirmed_7dav_in
   
   predictions <- df_test %>% select(geo_value, time_value, resp)
   
-  cat("\tFitting LASSO...")
-  fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)), y = df_train$resp, family = "binomial", alpha = 1)
-  fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)), 
-                      y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.1se, alpha = 1)
-  predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = 
-    predict(fit_lasso, newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
+  ## cat("\tFitting LASSO...")
+  ## preds <- fit_logistic_lasso_regression(df_train, df_test, nfold = 10, alpha = 0)
+  ## predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  ## cat(" Done!\n")
   
-  cat(" Done!\n\tFitting Ridge...")
+  ## cat("\tFitting Ridge...")
+  ## ### more models here!!! SVM, xgboost... add predictions as a col to predictions
+  ## ## eg ridge:
+  ## preds <- fit_logistic_lasso_regression(df_train, df_test, nfold = 10, alpha = 1)
+  ## predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  ## cat(" Done!\n")
+  
+  cat("\tFitting SVM...")
   ### more models here!!! SVM, xgboost... add predictions as a col to predictions
   ## eg ridge:
-  fit_ridge <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)), y = df_train$resp, family = "binomial", alpha = 0)
-  fit_ridge <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)), 
-                      y = df_train$resp, family = "binomial", lambda = fit_ridge$lambda.1se, alpha = 0)
-  predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = predict(fit_ridge, newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
+  preds <- fit_svm(df_train, df_test)
+  predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
+  
+  
   return(predictions)
+}
+
+
+
+# signal <- c(1,3,2,5,5,2,6,3,2,3,4,7,6,8,8,5)
+# start_date <- as.Date("2020-05-10")
+# timestamp <- seq(start_date, start_date+length(signal)-1, 1)
+# lags = 2; n_ahead = 3
+# mat_test <- data.frame(geo = 1,time=timestamp, val=signal, signal="testsignal")
+# ready_to_model(mat_test, lags, n_ahead, "testsignal")
+
+
+##' Performs CV-ed logistic lasso prediction, given training & test matrices.
+##' Outputs a vector of values the same as.
+##'
+##' @param df_train Training matrix. Must contain columns "geo_value",
+##'   "time_value", "resp", and some other columns that will be used as
+##'   covariates.
+##' @param df_test Test matrix. Same format as df_train.
+##' @param nfold 10.
+##' @param alpha 0 for lasso, or 1 for ridge regression. Used by \code{glmnet()}.
+##'
+##' @return Numeric vector the same length as \code{nrow(df_test)}.
+fit_logistic_regression <- function(df_train, df_test, nfold = 10, alpha = 0){
+  
+  ## Input checks (should be common for all fit_OOOO() functions
+  stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_train)))
+  stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_test)))
+  
+  ## Input check
+  stopifnot(alpha %in% c(0,1)) ## Only allow ridge or lasso for now.
+  
+  ## Make contiguous time blocks for CV
+  foldid <- make_foldid(df_train, nfold)
+  
+  ## Main part of the lasso fitting and predicting
+  fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
+                         y = df_train$resp,
+                         family = "binomial",
+                         alpha = 1,
+                         foldid = foldid,
+                         nfold=nfold)
+  fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
+                      y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.1se, alpha = 1)
+  preds = predict(fit_lasso, newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
+  
+  ## Out checks (should be common for all fit_OOOO() functions)
+  stopifnot(length(preds) == nrow(df_test))
+  
+  preds
+}
+
+##' Performs SVM prediction, given training & test matrices.
+##' Outputs a vector of values the same as.
+##'
+##' @param df_train Training matrix. Must contain columns "geo_value",
+##'   "time_value", "resp", and some other columns that will be used as
+##'   covariates.
+##' @param df_test Test matrix. Same format as df_train.
+##' @param ... Additional functions to \code{svm()} of the \code{e1071} R
+##'   package.
+##'
+##' @return Numeric vector the same length as \code{nrow(df_test)}.
+fit_svm <- function(df_train, df_test, ...){
+  
+  ## Input checks (should be common for all fit_OOOO() functions
+  stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_train)))
+  stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_test)))
+  
+  ## Fit SVM and make predictions
+  train_mat <- df_train %>% select(-geo_value, -time_value)
+  test_mat <- df_test %>% select(-geo_value, -time_value)
+  model <- e1071::svm(resp ~ ., data = train_mat, probability = TRUE, ...)
+  preds <- predict(model, test_mat)
+  
+  ## Next: replace with faster SVM: https://cran.r-project.org/src/contrib/Archive/RSofia/
+  ## ## Also might be useful: multicore, faster radial SVM with CV?
+  ## library(caret)
+  ## library(doMC)
+  ## registerDoMC()
+  ## model <-  train(Species ~ ., data = iris, method="svmRadial",
+  ##     trControl=trainControl(method='cv', number=10)) ## This CV is not great..
+  ## confusionMatrix(model)
+  
+  ## Out checks (should be common for all fit_OOOO() functions)
+  stopifnot(length(preds) == nrow(df_test))
+  
+  preds
 }
 
 
