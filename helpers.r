@@ -1,6 +1,5 @@
 library(dplyr)
 library(lubridate)
-library(plotROC)
 
 ##' adds NA to value if there is no signal for a particular day
 ##' 
@@ -125,7 +124,7 @@ ready_to_model <- function(mat, lags, n_ahead, response = "confirmed_7dav_incide
   features <- pivot_wider(features, id_cols = c("geo_value", "time_value"), names_from = c("signal", "data_source"), 
                           values_from = all_of(names_to_pivot)) %>% ungroup
   ## join features and response
-  mat_to_model <- inner_join(features, responses %>% select(-signal, -data_source), by = c("geo_value", "time_value"))
+  mat_to_model <- inner_join(features, responses %>% select(-signal, -data_source), by = c("geo_value", "time_value")) %>% na.omit()
   ## TODO add census features
   return(mat_to_model)
 }
@@ -163,38 +162,34 @@ make_foldid <- function(x, nfold){
 ##' fit models and produce test set predictions
 ##' currently: lasso, ridge
 ##' 
-##' @param mat output from api call
+##' @param df_model 
 ##' @param lags number of past values to include in the data frame; for time t, dataframe will have in one row X_t until X_{t-lag}
 ##' @param n_ahead number of days ahead that response will be computed
-fit_predict_models <- function(mat, lags, n_ahead, response = "confirmed_7dav_incidence_num"){
-  cat("Creating lagged variables and binary response...\n")
-  df_model <- ready_to_model(mat, lags, n_ahead, response)
-  cat("Done! \nNow fitting models:\n")
+fit_predict_models <- function(df_model, lags, n_ahead, response = "confirmed_7dav_incidence_num"){
+  cat("Fitting models:\n")
   splitted <- sample_split_date(df_model, pct_test=0.3)
   df_train <- splitted$df_train
   df_test <- splitted$df_test
-  
+  cat(paste("Training set: ",nrow(df_train), " observations. \nTest set: ",nrow(df_train), " observations. \n",  sep = ""))
+
   predictions <- df_test %>% select(geo_value, time_value, resp)
   
-  ## cat("\tFitting LASSO...")
-  ## preds <- fit_logistic_lasso_regression(df_train, df_test, nfold = 10, alpha = 0)
-  ## predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  ## cat(" Done!\n")
-  
-  ## cat("\tFitting Ridge...")
-  ## ### more models here!!! SVM, xgboost... add predictions as a col to predictions
-  ## ## eg ridge:
-  ## preds <- fit_logistic_lasso_regression(df_train, df_test, nfold = 10, alpha = 1)
-  ## predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  ## cat(" Done!\n")
-  
-  cat("\tFitting SVM...")
+  cat("\tFitting LASSO...")
+  preds <- fit_logistic_regression(df_train, df_test, nfold = 10, alpha = 0)
+  predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  cat(" Done!\n")
+
+  cat("\tFitting Ridge...")
   ### more models here!!! SVM, xgboost... add predictions as a col to predictions
   ## eg ridge:
-  preds <- fit_svm(df_train, df_test)
+  preds <- fit_logistic_regression(df_train, df_test, nfold = 10, alpha = 1)
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
   
+  cat("\tFitting SVM...")
+  preds <- fit_svm(df_train, df_test)
+  predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  cat(" Done!\n")
   
   return(predictions)
 }
@@ -327,7 +322,7 @@ get_population <- function(geo_type){
 ##' @param df_one dataframe for one model with at least columns: value, pred, resp, population
 ##'
 ##' @return dataframe with colulmns cutoff, wpred1, wprecision
-adapted_roc <- function(df_one,...){
+adapted_roc_onemodel <- function(df_one,...){
   df_one <- df_one %>% arrange(value)
   ## changing cutoffs
   metrics <- sapply(seq(0, 1, 0.01), function(i){
@@ -359,10 +354,10 @@ adapted_roc <- function(df_one,...){
 ##' @param geo_type county, msa, or state. will be used to get population data
 ##'
 ##' @return ggplot of model comparison curve
-plot_roc <- function(predictions, geo_type = "county"){
+plot_adapted_roc <- function(predictions, geo_type = "county"){
   df_temp <- inner_join(predictions, get_population(geo_type), by = "geo_value")
   df_temp <- reshape2::melt(df_temp, id.vars = c("geo_value", "time_value", "resp", "population"))
-  df_plot <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(adapted_roc)
+  df_plot <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(adapted_roc_onemodel)
  
   ggplot(df_plot, aes(x = wpred1, y = wprecision, color = model)) +  
     geom_line() +

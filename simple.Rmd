@@ -18,7 +18,6 @@ library(tidyverse)
 library(tidyr) ## for pivot_wider() ?
 library(devtools)
 library(glmnet)
-library(plotROC) ## For helpers.r
 source("helpers.r")
 ```
 
@@ -112,7 +111,34 @@ mat_small %>%
 
 ## Fitting models!
 
-### only past response
+### getting data
+```{r}
+lags = 7 
+n_ahead = 14
+response = "confirmed_7dav_incidence_prop"
+data_sources = c("indicator-combination", 
+                 "fb-survey", 
+                 "fb-survey", 
+                 "fb-survey", 
+                 "fb-survey")
+signals = c("confirmed_7dav_incidence_prop", 
+            "smoothed_cli", 
+            "smoothed_nohh_cmnty_cli", 
+            "smoothed_wcli", 
+            "smoothed_hh_cmnty_cli")
+signals = data.frame(data_sources = data_sources, signals = signals)
+#suppressMessages({
+mat = covidcast_signals(signals,
+                        start_day = "2020-05-01", end_day = "2020-08-04")
+#})
+mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
+mat <- add_NAval_missing_dates(mat) ## SH: This is going away? NLO: I think it's safer to keep it here
+df_model <- ready_to_model(mat, lags, n_ahead, response)
+df_model <- df_model %>% na.omit
+
+
+```
+
 ```{r}
 lags = 7
 n_ahead = 14
@@ -127,7 +153,8 @@ mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
 mat <- add_NAval_missing_dates(mat)
 
 source("helpers.r")
-predictions_onlylaggedresponse <- fit_predict_models(mat, lags, n_ahead, response = "confirmed_7dav_incidence_prop")
+df_model <- ready_to_model(mat, lags, n_ahead, response)
+predictions_onlylaggedresponse <- fit_predict_models(df_model, lags, n_ahead, response = "confirmed_7dav_incidence_prop")
 
 plt_onlylaggedresponse <- predictions_onlylaggedresponse %>% reshape2::melt(id.vars = c("geo_value", "time_value", "resp")) %>% 
   ggplot() + 
@@ -167,9 +194,10 @@ mat = covidcast_signals(signals,
                         start_day = "2020-05-01", end_day = "2020-08-04")
 #})
 mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
-mat <- add_NAval_missing_dates(mat) ## SH: This is going away?
+mat <- add_NAval_missing_dates(mat) ## SH: This is going away? NLO: I think it's safer to keep it here
 
-predictions_laggedandfacebook <- fit_predict_models(mat, lags, n_ahead, "confirmed_7dav_incidence_prop")
+df_model <- ready_to_model(mat, lags, n_ahead, response)
+predictions_laggedandfacebook <- fit_predict_models(df_model, lags, n_ahead, "confirmed_7dav_incidence_prop")
 
 plt_laggedandfacebook <- predictions_laggedandfacebook %>%
   reshape2::melt(id.vars = c("geo_value", "time_value", "resp")) %>% 
