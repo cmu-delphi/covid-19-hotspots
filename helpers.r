@@ -91,6 +91,8 @@ response_onegeo <- function(df, n_ahead, fn_response = response_diff, ...){
 }
 
 ##' considers increase if there is a 25% increase
+##' very simple function, only looks at today's value and target value
+##' we should write a better function
 ##' 
 ##' @param x vector of values that will be used to determine hotspot, from 1 until i+n_ahead
 ##' @param i position of the vector x that is "today"; everything from i+1:forward is not known as features
@@ -178,13 +180,61 @@ fit_predict_models <- function(mat, lags, n_ahead, response = "confirmed_7dav_in
 
 
 
-# signal <- c(1,3,2,5,5,2,6,3,2,3,4,7,6,8,8,5)
-# start_date <- as.Date("2020-05-10")
-# timestamp <- seq(start_date, start_date+length(signal)-1, 1)
-# lags = 2; n_ahead = 3
-# mat_test <- data.frame(geo = 1,time=timestamp, val=signal, signal="testsignal")
-# ready_to_model(mat_test, lags, n_ahead, "testsignal")
+get_population <- function(geo_type){
+  if(geo_type == "county"){
+    county_pop = county_census %>% 
+      transmute (geo_value = 1000*as.numeric(STATE) + as.numeric(COUNTY),
+                 population = POPESTIMATE2019)
+    county_pop$geo_value <- sprintf("%05d", county_pop$geo_value)
+    return(county_pop)
+  }
+  if(geo_type == "state"){
+    state_pop <- state_census %>% 
+      mutate(geo_value = as.numeric(STATE)) %>% 
+      filter(STATE != 0) %>% 
+      group_by(geo_value) %>% 
+      summarise(population = sum(POPESTIMATE2019))
+    state_crosswalk <- state.fips %>% 
+      select(abb, fips) %>% distinct() %>% mutate(abb = tolower(abb))
+    state_pop <- state_pop %>% 
+      inner_join(state_crosswalk, by = c("geo_value" = "fips")) %>% 
+      select(geo_value = abb, population)
+    return(state_pop)
+  }
+  if(geo_type == "msa"){
+    return(msa_census %>% 
+             transmute(geo_value = as.character(CBSA),
+                       population = POPESTIMATE2019))
+  }
+}
 
+adapted_roc <- function(df_one,...){
+  df_one <- df_one %>% arrange(value)
+  metrics <- sapply(seq(0, 1, 0.01), function(i){
+    df_temp <- df_one
+    df_temp$pred <- ifelse(df_temp$value<=i, 0, 1)
+    precision = (df_temp %>% filter(pred == 1, resp == 1) %>% summarise(n()) %>% unlist)/(df_temp %>% filter(pred == 1) %>% summarise(n()) %>% unlist)
+    if((df_temp %>% filter(pred == 1) %>% nrow) == 0) precision = 1
+    wprecision = precision*(df_temp %>% filter(pred == 1, resp == 1) %>% summarise(sum(population)) %>% unlist)/(df_temp %>% filter(pred == 1) %>% summarise(sum(population)) %>% unlist)
+    if((df_temp %>% filter(pred == 1) %>% summarise(sum(population)) %>% unlist) == 0) wprecision = 1
+    pred1 = (df_temp %>% filter(pred == 1) %>% summarise(n()) %>% unlist)/nrow(df_temp)
+    wpred1 = pred1 * (df_temp %>% filter(pred == 1) %>% summarise(sum(population)) %>% unlist)/sum(df_temp$population)
+    return(c(i, wpred1, wprecision))
+  })
+  metrics <- as.data.frame(t(metrics))
+  names(metrics) <- c("cutoff","wpred1", "wprecision")
+  return(metrics)
+}
 
-
-
+plot_roc <- function(predictions, geo_type = "county"){
+  df_temp <- inner_join(predictions, get_population(geo_type), by = "geo_value")
+  df_temp <- reshape2::melt(df_temp, id.vars = c("geo_value", "time_value", "resp", "population"))
+  df_plot <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(adapted_roc)
+ 
+  ggplot(df_plot, aes(x = wpred1, y = wprecision, color = model)) +  
+    geom_line() +
+    theme_bw(base_size = 18) + 
+    ylab("population weighted precision") +
+    xlab("population weighted % predicted hotspots") + 
+    theme(legend.position = "bottom")
+}
