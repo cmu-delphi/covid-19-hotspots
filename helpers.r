@@ -288,7 +288,11 @@ fit_svm <- function(df_train, df_test, ...){
 }
 
 
-
+##' gets population for specific geo_type
+##'
+##' @param geo_type county, msa, state
+##'
+##' @return dataframe with columns geo_value and population
 get_population <- function(geo_type){
   if(geo_type == "county"){
     county_pop = county_census %>% 
@@ -317,24 +321,44 @@ get_population <- function(geo_type){
   }
 }
 
+##' computes population weighted precision and population weighted proportion of predicted 1's for different cutoffs
+##' considers ONE MODEL only
+##'
+##' @param df_one dataframe for one model with at least columns: value, pred, resp, population
+##'
+##' @return dataframe with colulmns cutoff, wpred1, wprecision
 adapted_roc <- function(df_one,...){
   df_one <- df_one %>% arrange(value)
+  ## changing cutoffs
   metrics <- sapply(seq(0, 1, 0.01), function(i){
     df_temp <- df_one
+    ## binary predictions for the cutoff
     df_temp$pred <- ifelse(df_temp$value<=i, 0, 1)
+    
+    ## computing weighted precision. if numerator and denominator are 0, assign precision = 1
     precision = (df_temp %>% filter(pred == 1, resp == 1) %>% summarise(n()) %>% unlist)/(df_temp %>% filter(pred == 1) %>% summarise(n()) %>% unlist)
     if((df_temp %>% filter(pred == 1) %>% nrow) == 0) precision = 1
     wprecision = precision*(df_temp %>% filter(pred == 1, resp == 1) %>% summarise(sum(population)) %>% unlist)/(df_temp %>% filter(pred == 1) %>% summarise(sum(population)) %>% unlist)
     if((df_temp %>% filter(pred == 1) %>% summarise(sum(population)) %>% unlist) == 0) wprecision = 1
+    
+    ## computing weighted % of predicted 1's
     pred1 = (df_temp %>% filter(pred == 1) %>% summarise(n()) %>% unlist)/nrow(df_temp)
     wpred1 = pred1 * (df_temp %>% filter(pred == 1) %>% summarise(sum(population)) %>% unlist)/sum(df_temp$population)
     return(c(i, wpred1, wprecision))
   })
+  ## transforming matrix into dataframe and naming it appropriately
   metrics <- as.data.frame(t(metrics))
   names(metrics) <- c("cutoff","wpred1", "wprecision")
   return(metrics)
 }
 
+##' computes metrics for all models and produces roc curves (our adapted roc with different metrics)
+##'
+##' @param predictions dataframe with cols: geo_value, time_value, resp, 
+##'                    and one column per model with predicted values whose col name is the models name
+##' @param geo_type county, msa, or state. will be used to get population data
+##'
+##' @return ggplot of model comparison curve
 plot_roc <- function(predictions, geo_type = "county"){
   df_temp <- inner_join(predictions, get_population(geo_type), by = "geo_value")
   df_temp <- reshape2::melt(df_temp, id.vars = c("geo_value", "time_value", "resp", "population"))
