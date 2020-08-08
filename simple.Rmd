@@ -126,6 +126,7 @@ mat = covidcast_signals(signals,
 mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
 mat <- add_NAval_missing_dates(mat)
 
+source("helpers.r")
 predictions_onlylaggedresponse <- fit_predict_models(mat, lags, n_ahead, response = "confirmed_7dav_incidence_prop")
 
 plt_onlylaggedresponse <- predictions_onlylaggedresponse %>% reshape2::melt(id.vars = c("geo_value", "time_value", "resp")) %>% 
@@ -170,7 +171,8 @@ mat <- add_NAval_missing_dates(mat) ## SH: This is going away?
 
 predictions_laggedandfacebook <- fit_predict_models(mat, lags, n_ahead, "confirmed_7dav_incidence_prop")
 
-plt_laggedandfacebook <- predictions_laggedandfacebook %>% reshape2::melt(id.vars = c("geo_value", "time_value", "resp")) %>% 
+plt_laggedandfacebook <- predictions_laggedandfacebook %>%
+  reshape2::melt(id.vars = c("geo_value", "time_value", "resp")) %>% 
   ggplot() + 
   geom_roc(aes(d = resp, m = value, color = variable), n.cuts = 0) + 
   theme_bw(base_size = 14) + 
