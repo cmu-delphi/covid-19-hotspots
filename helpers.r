@@ -233,9 +233,9 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 10, alpha = 0){
                          family = "binomial",
                          alpha = 1,
                          foldid = foldid,
-                         nfold=nfold)
+                         nfold = nfold)
   fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
-                      y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.1se, alpha = 1)
+                      y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.1se, alpha = 0)
   preds = predict(fit_lasso, newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
   
   ## Out checks (should be common for all fit_OOOO() functions)
