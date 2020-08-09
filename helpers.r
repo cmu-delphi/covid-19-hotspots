@@ -186,10 +186,10 @@ fit_predict_models <- function(df_model, lags, n_ahead, response = "confirmed_7d
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
   
-  cat("\tFitting SVM...")
-  preds <- fit_svm(df_train, df_test)
-  predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  cat(" Done!\n")
+  ## cat("\tFitting SVM...")
+  ## preds <- fit_svm(df_train, df_test)
+  ## predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  ## cat(" Done!\n")
   
   return(predictions)
 }
@@ -231,11 +231,11 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 10, alpha = 0){
   fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
                          y = df_train$resp,
                          family = "binomial",
-                         alpha = 1,
+                         alpha = alpha,
                          foldid = foldid,
                          nfold = nfold)
   fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
-                      y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.1se, alpha = 0)
+                      y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.1se, alpha = alpha)
   preds = predict(fit_lasso, newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
   
   ## Out checks (should be common for all fit_OOOO() functions)
@@ -354,15 +354,21 @@ adapted_roc_onemodel <- function(df_one,...){
 ##' @param geo_type county, msa, or state. will be used to get population data
 ##'
 ##' @return ggplot of model comparison curve
-plot_adapted_roc <- function(predictions, geo_type = "county"){
+plot_adapted_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_existing = NULL){
   df_temp <- inner_join(predictions, get_population(geo_type), by = "geo_value")
   df_temp <- reshape2::melt(df_temp, id.vars = c("geo_value", "time_value", "resp", "population"))
   df_plot <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(adapted_roc_onemodel)
- 
+
+  if(!add){
   ggplot(df_plot, aes(x = wpred1, y = wprecision, color = model)) +  
     geom_line() +
     theme_bw(base_size = 18) + 
     ylab("population weighted precision") +
     xlab("population weighted % predicted hotspots") + 
     theme(legend.position = "bottom")
+      + theme_bw(base_size = 18)
+  } else {
+    df_plot_existing + geom_line(data=df_plot, linetype = "dashed")
+      ## theme_bw(base_size = 18)
+  }
 }

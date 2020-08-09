@@ -1,0 +1,104 @@
+---
+title: Predicting hotspots
+author: Justin, Natalia 
+date: Aug 9, 2020
+output:
+  html_document:
+    code_folding: show
+    toc: true
+    toc_float: true
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=TRUE, cache=TRUE,
+                      warning=FALSE, message=FALSE)
+library(ggplot2)
+library(covidcast)
+library(tidyverse)
+library(tidyr) ## for pivot_wider() ?
+library(devtools)
+library(glmnet)
+source("helpers.r")
+
+## Location of your covidcast R package.
+load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
+## load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast")
+```
+
+## Goal
+
+Use l1-penalized and ridge logistic regression, and SVM, for a hotspot detection
+model.
+
+## Data and model 
+
+1. **Data** Between 2020-05-01 and 2020-08-04, take the 7-day case proportion,
+   and various FB surveys (smoothed individual, smoothed community survey,
+   smoothed household survey, smoothed weighted household survey). This data is
+   combined so that the response is formed as (1 if 25% increase in the next
+   week, 0 otherwise)
+2. **Validation data** is the last 30 days worth of this data.
+3. **Training and test data** is the rest of this data.
+2. Explain response data
+3. Training and test and validation scheme
+4. Explain CV of l1 \& l2 penalized regression is not ideal
+5. Explain our custom ROC curve
+
+
+## Main script
+
+We first collect data:
+
+```{r collect-data}
+lags = 21
+n_ahead = 21
+response = "confirmed_7dav_incidence_prop"
+data_sources = c("indicator-combination", 
+                 "fb-survey", 
+                 "fb-survey", 
+                 "fb-survey", 
+                 "fb-survey")
+signals = c("confirmed_7dav_incidence_prop", 
+            "smoothed_cli", 
+            "smoothed_nohh_cmnty_cli", 
+            "smoothed_wcli", 
+            "smoothed_hh_cmnty_cli")
+start_day = as.Date("2020-05-01")
+end_day = as.Date("2020-08-04")
+validation_days = seq(end_day-30, end_day, by = "days")
+signals = data.frame(data_sources = data_sources, signals = signals)
+#suppressMessages({
+mat = covidcast_signals(signals,
+                        start_day = start_day, end_day = end_day)
+#})
+mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
+mat <- add_NAval_missing_dates(mat) ## SH: This is going away? NLO: I think it's safer to keep it here
+## t0 <- Sys.time()
+df_model <- ready_to_model(mat, lags, n_ahead, response)
+## Sys.time()-t0
+df_traintest <- df_model %>% filter(!(time_value %in% validation_days))
+df_validation <- df_model %>% filter(time_value %in% validation_days)
+```
+
+Then make the two ROC curves of the classification performance of data, with and
+without Facebook.
+
+```{r make-prediction}
+######################################
+## model with lagged responses only ##
+###################################### 
+predictions_onlylaggedresponse <- fit_predict_models(df_traintest %>% select(geo_value, time_value, resp, contains(response)), 
+                                                     lags = lags, n_ahead = n_ahead)
+source('helpers.r')
+a = plot_adapted_roc(predictions_onlylaggedresponse)
+a
+
+
+####################################################
+## model with lagged responses + facebook signals ##
+####################################################
+predictions_laggedandfacebook <- fit_predict_models(df_traintest, lags = lags, n_ahead = n_ahead)
+plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a)
+```
+
+SH: I don't know how to make the line colors consistent
