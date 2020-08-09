@@ -330,20 +330,19 @@ adapted_roc_onemodel <- function(df_one,...){
     ## binary predictions for the cutoff
     df_temp$pred <- ifelse(df_temp$value<=i, 0, 1)
     
-    ## computing weighted precision. if numerator and denominator are 0, assign precision = 1
-    precision = (df_temp %>% filter(pred == 1, resp == 1) %>% summarise(n()) %>% unlist)/(df_temp %>% filter(pred == 1) %>% summarise(n()) %>% unlist)
-    if((df_temp %>% filter(pred == 1) %>% nrow) == 0) precision = 1
-    wprecision = precision*(df_temp %>% filter(pred == 1, resp == 1) %>% summarise(sum(population)) %>% unlist)/(df_temp %>% filter(pred == 1) %>% summarise(sum(population)) %>% unlist)
+    wprecision = (df_temp %>% filter(pred == 1, resp == 1) %>% summarise(sum(population)) %>% unlist)/(df_temp %>% filter(pred == 1) %>% summarise(sum(population)) %>% unlist)
     if((df_temp %>% filter(pred == 1) %>% summarise(sum(population)) %>% unlist) == 0) wprecision = 1
     
+    wrecall = (df_temp %>% filter(pred == 1, resp == 1) %>% summarise(sum(population)) %>% unlist)/(df_temp %>% filter(resp == 1) %>% summarise(sum(population)) %>% unlist)
+    if((df_temp %>% filter(resp == 1) %>% summarise(sum(population)) %>% unlist) == 0) wrecall = 1
+    
     ## computing weighted % of predicted 1's
-    pred1 = (df_temp %>% filter(pred == 1) %>% summarise(n()) %>% unlist)/nrow(df_temp)
-    wpred1 = pred1 * (df_temp %>% filter(pred == 1) %>% summarise(sum(population)) %>% unlist)/sum(df_temp$population)
-    return(c(i, wpred1, wprecision))
+    wpred1 =(df_temp %>% filter(pred == 1) %>% summarise(sum(population)) %>% unlist)/sum(df_temp$population)
+    return(c(i, wpred1, wprecision, wrecall))
   })
   ## transforming matrix into dataframe and naming it appropriately
   metrics <- as.data.frame(t(metrics))
-  names(metrics) <- c("cutoff","wpred1", "wprecision")
+  names(metrics) <- c("cutoff","wpred1", "wprecision", "wrecall")
   return(metrics)
 }
 
@@ -358,11 +357,18 @@ plot_adapted_roc <- function(predictions, geo_type = "county"){
   df_temp <- inner_join(predictions, get_population(geo_type), by = "geo_value")
   df_temp <- reshape2::melt(df_temp, id.vars = c("geo_value", "time_value", "resp", "population"))
   df_plot <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(adapted_roc_onemodel)
+  
+  precision_thresh <- df_temp %>% select(resp, population, geo_value, time_value) %>% distinct() %>% filter(resp == 1) %>% summarise(sum(population)/sum(df_temp$population)) %>% unlist()
  
-  ggplot(df_plot, aes(x = wpred1, y = wprecision, color = model)) +  
-    geom_line() +
+  ggplot(df_plot, aes(x = wpred1, color = model)) +  
+    geom_line(aes(y = wprecision), lty = 1) +
+    geom_line(aes(y = wrecall), lty = 2) +
+    ylim(0,1) + 
+    xlim(0,1) +
+    geom_hline(yintercept = precision_thresh) +
     theme_bw(base_size = 18) + 
     ylab("population weighted precision") +
     xlab("population weighted % predicted hotspots") + 
+    scale_y_continuous(sec.axis = sec_axis(~., name = "population weighted recall (dashed)")) +
     theme(legend.position = "bottom")
 }
