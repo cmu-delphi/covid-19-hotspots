@@ -50,8 +50,8 @@ model.
 We first collect data:
 
 ```{r collect-data}
-lags = 21
-n_ahead = 21
+lags = 28
+n_ahead = 28
 response = "confirmed_7dav_incidence_prop"
 data_sources = c("indicator-combination", 
                  "fb-survey", 
@@ -89,7 +89,6 @@ without Facebook.
 ###################################### 
 predictions_onlylaggedresponse <- fit_predict_models(df_traintest %>% select(geo_value, time_value, resp, contains(response)), 
                                                      lags = lags, n_ahead = n_ahead)
-source('helpers.r')
 a = plot_adapted_roc(predictions_onlylaggedresponse)
 a
 
