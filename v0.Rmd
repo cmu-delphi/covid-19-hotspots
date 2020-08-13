@@ -52,6 +52,7 @@ We first collect data:
 ```{r collect-data}
 lags = 28
 n_ahead = 28
+geo_type = "msa"
 response = "confirmed_7dav_incidence_prop"
 data_sources = c("indicator-combination", 
                  "fb-survey", 
@@ -69,13 +70,12 @@ validation_days = seq(end_day-30, end_day, by = "days")
 signals = data.frame(data_sources = data_sources, signals = signals)
 #suppressMessages({
 mat = covidcast_signals(signals,
-                        start_day = start_day, end_day = end_day)
+                        start_day = start_day, end_day = end_day, geo_type = geo_type)
 #})
 mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
-mat <- add_NAval_missing_dates(mat) ## SH: This is going away? NLO: I think it's safer to keep it here
-## t0 <- Sys.time()
+ t0 <- Sys.time()
 df_model <- ready_to_model(mat, lags, n_ahead, response)
-## Sys.time()-t0
+ Sys.time()-t0
 df_traintest <- df_model %>% filter(!(time_value %in% validation_days))
 df_validation <- df_model %>% filter(time_value %in% validation_days)
 ```
@@ -89,7 +89,7 @@ without Facebook.
 ###################################### 
 predictions_onlylaggedresponse <- fit_predict_models(df_traintest %>% select(geo_value, time_value, resp, contains(response)), 
                                                      lags = lags, n_ahead = n_ahead)
-a = plot_adapted_roc(predictions_onlylaggedresponse)
+a = plot_adapted_roc(predictions_onlylaggedresponse, geo_type = geo_type)
 a
 
 
@@ -97,7 +97,8 @@ a
 ## model with lagged responses + facebook signals ##
 ####################################################
 predictions_laggedandfacebook <- fit_predict_models(df_traintest, lags = lags, n_ahead = n_ahead)
-plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a)
+b = plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type)
+b
 ```
 
 SH: I don't know how to make the line colors consistent

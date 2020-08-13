@@ -1,5 +1,6 @@
 library(dplyr)
 library(lubridate)
+library(xgboost)
 
 ##' adds NA to value if there is no signal for a particular day
 ##' 
@@ -185,7 +186,7 @@ fit_predict_models <- function(df_model, lags, n_ahead, response = "confirmed_7d
   splitted <- sample_split_date(df_model, pct_test=0.3)
   df_train <- splitted$df_train
   df_test <- splitted$df_test
-  cat(paste("Training set: ",nrow(df_train), " observations. \nTest set: ",nrow(df_train), " observations. \n",  sep = ""))
+  cat(paste("Training set: ",nrow(df_train), " observations. \nTest set: ",nrow(df_test), " observations. \n",  sep = ""))
 
   predictions <- df_test %>% select(geo_value, time_value, resp)
   
@@ -201,10 +202,15 @@ fit_predict_models <- function(df_model, lags, n_ahead, response = "confirmed_7d
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
   
-  ## cat("\tFitting SVM...")
-  ## preds <- fit_svm(df_train, df_test)
-  ## predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  ## cat(" Done!\n")
+  cat("\tFitting SVM...")
+  preds <- fit_svm(df_train, df_test)
+  predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  cat(" Done!\n")
+  
+  cat("\tFitting xgboost...")
+  preds <- fit_xgb(df_train, df_test)
+  predictions[[paste("xgb_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  cat(" Done!\n")
   
   return(predictions)
 }
@@ -266,8 +272,6 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 10, alpha = 0){
 ##'   "time_value", "resp", and some other columns that will be used as
 ##'   covariates.
 ##' @param df_test Test matrix. Same format as df_train.
-##' @param ... Additional functions to \code{svm()} of the \code{e1071} R
-##'   package.
 ##'
 ##' @return Numeric vector the same length as \code{nrow(df_test)}.
 fit_svm <- function(df_train, df_test, ...){
@@ -297,6 +301,51 @@ fit_svm <- function(df_train, df_test, ...){
   preds
 }
 
+##' Performs xgboost prediction, given training & test matrices.
+##' Outputs a vector of values the same as y.
+##'
+##' @param df_train Training matrix. Must contain columns "geo_value",
+##'   "time_value", "resp", and some other columns that will be used as
+##'   covariates.
+##' @param df_test Test matrix. Same format as df_train.
+##' @param ... Additional functions to \code{xgb.train()} of the \code{xgboost} R
+##'   package.
+##'
+##' @return Numeric vector the same length as \code{nrow(df_test)}.
+fit_xgb <- function(df_train, df_test){
+  
+  ## Input checks (should be common for all fit_OOOO() functions
+  stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_train)))
+  stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_test)))
+  
+  
+  ## transforms dataframe to XGBoost data format
+  dtrain <- xgb.DMatrix(as.matrix(df_train %>% dplyr::select(-resp, -geo_value, -time_value)), 
+                        label = as.vector(df_train$resp))
+  dtest <- xgb.DMatrix(as.matrix(df_test %>% dplyr::select(-resp, -geo_value, -time_value)), 
+                        label = as.vector(df_test$resp))
+  ## Fit xgboost and make predictions
+  mod <- xgb.train(booster = "gbtree", 
+                   data = dtrain, 
+                   nthread = 5,
+                   eta = 0.3, 
+                   gamma = 1, 
+                   max_depth = 6,
+                   nrounds = 500,
+                   nfold = 5,  
+                   objective = "binary:logistic",
+                   colsample_bytree = 0.7,
+                   subsample = 0.7)
+  
+  preds <- predict(mod, dtest)
+  
+  ## Out checks (should be common for all fit_OOOO() functions)
+  stopifnot(length(preds) == nrow(df_test))
+  
+  preds
+}
+
+
 
 ##' gets population for specific geo_type
 ##'
@@ -317,7 +366,7 @@ get_population <- function(geo_type){
       filter(STATE != 0) %>% 
       group_by(geo_value) %>% 
       summarise(population = sum(POPESTIMATE2019))
-    state_crosswalk <- state.fips %>% 
+    state_crosswalk <- maps::state.fips %>% 
       select(abb, fips) %>% distinct() %>% mutate(abb = tolower(abb))
     state_pop <- state_pop %>% 
       inner_join(state_crosswalk, by = c("geo_value" = "fips")) %>% 
