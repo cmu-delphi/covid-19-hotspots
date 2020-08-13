@@ -65,7 +65,7 @@ lagged_features_onegeo <- function(df, lags, name = "feature"){
 ##' @param n_ahead number of days ahead that response will be computed
 ##' @param fn_response logic for computing response, based on a provided response vector whose all points will be used for this computation
 ##' @return inputted dataframe with addedmresp colum, which is a binary variable indicating if there is a hotspot n days ahead of the date variable
-response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg, ...){
+response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg_1week, ...){
   signal <- df$value
   timestamp <- df$time_value
   
@@ -91,8 +91,7 @@ response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg, ...){
 }
 
 ##' considers increase if there is a 25% increase
-##' very simple function, only looks at today's value and target value
-##' we should write a better function
+##' looks at last weeks average and compare to average of today+1 until today+n_ahead
 ##' 
 ##' @param x vector of values that will be used to determine hotspot, from 1 until i+n_ahead
 ##' @param i position of the vector x that is "today"; everything from i+1:forward is not known as features
@@ -102,8 +101,24 @@ response_diff_avg <- function(x, i, threshold = .25){
   len = length(x)
   up = mean(x[(i+1):len])
   low = mean(x[max(1,i-6):i], na.rm=TRUE)
-  ifelse(((up-low)/low)>1.25, 1, 0)
+  ifelse(((up-low)/low)>(1+threshold), 1, 0)
 }
+
+##' considers increase if there is a 25% increase
+##' looks at last weeks average and the avg of the last week between today and n_ahead
+##' 
+##' @param x vector of values that will be used to determine hotspot, from 1 until i+n_ahead
+##' @param i position of the vector x that is "today"; everything from i+1:forward is not known as features
+##' @param threshold threshold on increase val to determine hotspot
+##' @return 1 if hotspot, 0 if not
+response_diff_avg_1week <- function(x, i, threshold = .25){
+  len = length(x)
+  up = mean(x[max(i+1,len-6):len])
+  low = mean(x[max(1,i-6):i], na.rm=TRUE)
+  ifelse(((up-low)/low)>(1+threshold), 1, 0)
+}
+
+
 
 ##' considers increase if there is a 25% increase
 ##' very simple function, only looks at today's value and target value

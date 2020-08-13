@@ -51,8 +51,8 @@ We first collect data:
 
 ```{r collect-data}
 lags = 28
-n_ahead = 28
-geo_type = "msa"
+n_ahead = 14
+geo_type = "state"
 response = "confirmed_7dav_incidence_prop"
 data_sources = c("indicator-combination", 
                  "fb-survey", 
@@ -99,6 +99,7 @@ a
 predictions_laggedandfacebook <- fit_predict_models(df_traintest, lags = lags, n_ahead = n_ahead)
 b = plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type)
 b
+ggsave(plot = b, filename = paste("figures/", toupper(geo_type), "precrecall_lag", lags,"_nahead", n_ahead, ".png", sep = ""), width = 12, height = 8, dpi = 200)
 ```
 
 SH: I don't know how to make the line colors consistent
