@@ -51,8 +51,8 @@ We first collect data:
 
 ```{r collect-data}
 lags = 28
-n_ahead = 14
-geo_type = "state"
+n_ahead = 28
+geo_type = "county"
 response = "confirmed_7dav_incidence_prop"
 data_sources = c("indicator-combination", 
                  "fb-survey", 

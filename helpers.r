@@ -65,7 +65,7 @@ lagged_features_onegeo <- function(df, lags, name = "feature"){
 ##' @param n_ahead number of days ahead that response will be computed
 ##' @param fn_response logic for computing response, based on a provided response vector whose all points will be used for this computation
 ##' @return inputted dataframe with addedmresp colum, which is a binary variable indicating if there is a hotspot n days ahead of the date variable
-response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg_1week, ...){
+response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg, ...){
   signal <- df$value
   timestamp <- df$time_value
   
@@ -130,7 +130,7 @@ response_diff_avg_1week <- function(x, i, threshold = .25){
 ##' @return 1 if hotspot, 0 if not
 response_diff <- function(x, i, threshold = .25){
   len = length(x)
-  ifelse((x[len]-x[i])/x[i]>1.25, 1, 0)
+  ifelse((x[len]-x[i])/x[i]>(1+threshold), 1, 0)
 }
 
 ## TODO
@@ -217,10 +217,10 @@ fit_predict_models <- function(df_model, lags, n_ahead, response = "confirmed_7d
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
   
-  cat("\tFitting SVM...")
-  preds <- fit_svm(df_train, df_test)
-  predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  cat(" Done!\n")
+  # cat("\tFitting SVM...")
+  # preds <- fit_svm(df_train, df_test)
+  # predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  # cat(" Done!\n")
   
   cat("\tFitting xgboost...")
   preds <- fit_xgb(df_train, df_test)
