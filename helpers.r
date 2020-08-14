@@ -65,7 +65,7 @@ lagged_features_onegeo <- function(df, lags, name = "feature"){
 ##' @param n_ahead number of days ahead that response will be computed
 ##' @param fn_response logic for computing response, based on a provided response vector whose all points will be used for this computation
 ##' @return inputted dataframe with addedmresp colum, which is a binary variable indicating if there is a hotspot n days ahead of the date variable
-response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg, ...){
+response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg, threshold, ...){
   signal <- df$value
   timestamp <- df$time_value
   
@@ -84,7 +84,7 @@ response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg, ...){
   ## for the points that have n_ahead points available, compute hotspot based on the values available 
   ## between time and time+n_ahead using the logic provided through fn_response
   for(i in 1:(len-n_ahead+1)){
-    out$resp[i] <- fn_response(signal[1:(i+n_ahead)], i, ...)
+    out$resp[i] <- fn_response(signal[1:(i+n_ahead)], i, threshold, ...)
   }
   
   return(out)
@@ -97,7 +97,7 @@ response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg, ...){
 ##' @param i position of the vector x that is "today"; everything from i+1:forward is not known as features
 ##' @param threshold threshold on increase val to determine hotspot
 ##' @return 1 if hotspot, 0 if not
-response_diff_avg <- function(x, i, threshold = .25){
+response_diff_avg <- function(x, i, threshold){
   len = length(x)
   up = mean(x[(i+1):len])
   low = mean(x[max(1,i-6):i], na.rm=TRUE)
@@ -111,10 +111,11 @@ response_diff_avg <- function(x, i, threshold = .25){
 ##' @param i position of the vector x that is "today"; everything from i+1:forward is not known as features
 ##' @param threshold threshold on increase val to determine hotspot
 ##' @return 1 if hotspot, 0 if not
-response_diff_avg_1week <- function(x, i, threshold = .25){
+response_diff_avg_1week <- function(x, i, threshold){
   len = length(x)
-  up = mean(x[max(i+1,len-6):len])
+  up = mean(x[max(i+1,len-6):len], na.rm=TRUE)
   low = mean(x[max(1,i-6):i], na.rm=TRUE)
+  #cat(paste(round(low, 3), round(up,3), round((up-low)/low,3), ifelse(((up-low)/low)>(1+threshold), 1, 0), "\n", sep = " "))
   ifelse(((up-low)/low)>(1+threshold), 1, 0)
 }
 
@@ -128,13 +129,40 @@ response_diff_avg_1week <- function(x, i, threshold = .25){
 ##' @param i position of the vector x that is "today"; everything from i+1:forward is not known as features
 ##' @param threshold threshold on increase val to determine hotspot
 ##' @return 1 if hotspot, 0 if not
-response_diff <- function(x, i, threshold = .25){
+response_diff <- function(x, i, threshold){
   len = length(x)
   ifelse((x[len]-x[i])/x[i]>(1+threshold), 1, 0)
 }
 
 ## TODO
-#get_countyinfo <- function()
+get_geoinfo <- function(df_all, geo_value){
+  if(geo_type == "county"){
+    county_pop = county_census %>% 
+      transmute (geo_value = 1000*as.numeric(STATE) + as.numeric(COUNTY),
+                 population = POPESTIMATE2019)
+    county_pop$geo_value <- sprintf("%05d", county_pop$geo_value)
+    return(county_pop)
+  }
+  if(geo_type == "state"){
+    state_pop <- state_census %>% 
+      mutate(geo_value = as.numeric(STATE)) %>% 
+      filter(STATE != 0) %>% 
+      group_by(geo_value) %>% 
+      summarise(population = sum(POPESTIMATE2019))
+    state_crosswalk <- maps::state.fips %>% 
+      select(abb, fips) %>% distinct() %>% mutate(abb = tolower(abb))
+    state_pop <- state_pop %>% 
+      inner_join(state_crosswalk, by = c("geo_value" = "fips")) %>% 
+      select(geo_value = abb, population)
+    return(state_pop)
+  }
+  if(geo_type == "msa"){
+    return(msa_census %>% 
+             transmute(geo_value = as.character(CBSA),
+                       population = POPESTIMATE2019))
+  }
+}
+
 
 ##' outputs data ready for modeling, with all lagged features and binary response
 ##'    uses output from API call
@@ -143,13 +171,16 @@ response_diff <- function(x, i, threshold = .25){
 ##' @param lags number of past values to include in the data frame; for time t, dataframe will have in one row X_t until X_{t-lag}
 ##' @param n_ahead number of days ahead that response will be computed
 ##' @param response name of the response variable in mat
-ready_to_model <- function(mat, lags, n_ahead, response = "confirmed_7dav_incidence_num"){
+##' @param fn_response logic for computing response, based on a provided response vector whose all points will be used for this computation
+##' @param threshold threshold on increase val to determine hotspot
+ready_to_model <- function(mat, lags, n_ahead, response = "confirmed_7dav_incidence_num", fn_response = response_diff_avg_1week, threshold = .25){
   ## construct lagged features for all available signals, including lagged responses
   ## removes all NAs 
   # TODO deal with NAs
   features <- mat %>% plyr::ddply(c("signal", "data_source", "geo_value"), lagged_features_onegeo, lags = lags) %>% na.omit()
   ## construct hotspot indicator in the resp variable
-  responses <- mat %>% filter(signal == response) %>% plyr::ddply(c("signal", "data_source", "geo_value"), response_onegeo, n_ahead = n_ahead) %>% na.omit()
+  responses <- mat %>% filter(signal == response) %>% plyr::ddply(c("signal", "data_source", "geo_value"), response_onegeo,
+                                                                  n_ahead = n_ahead, fn_response = fn_response, threshold = threshold) %>% na.omit()
   ## transform the dataframe in a wide format, with one row per geo_value and date
   names_to_pivot <- colnames(features %>% select(-geo_value, -time_value, -signal, -data_source))
   features <- pivot_wider(features, id_cols = c("geo_value", "time_value"), names_from = c("signal", "data_source"), 
@@ -196,12 +227,8 @@ make_foldid <- function(x, nfold){
 ##' @param df_model 
 ##' @param lags number of past values to include in the data frame; for time t, dataframe will have in one row X_t until X_{t-lag}
 ##' @param n_ahead number of days ahead that response will be computed
-fit_predict_models <- function(df_model, lags, n_ahead, response = "confirmed_7dav_incidence_num"){
+fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "confirmed_7dav_incidence_num"){
   cat("Fitting models:\n")
-  splitted <- sample_split_date(df_model, pct_test=0.3)
-  df_train <- splitted$df_train
-  df_test <- splitted$df_test
-  cat(paste("Training set: ",nrow(df_train), " observations. \nTest set: ",nrow(df_test), " observations. \n",  sep = ""))
 
   predictions <- df_test %>% select(geo_value, time_value, resp)
   
@@ -217,10 +244,10 @@ fit_predict_models <- function(df_model, lags, n_ahead, response = "confirmed_7d
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
   
-  # cat("\tFitting SVM...")
-  # preds <- fit_svm(df_train, df_test)
-  # predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  # cat(" Done!\n")
+  cat("\tFitting SVM...")
+  preds <- fit_svm(df_train, df_test)
+  predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  cat(" Done!\n")
   
   cat("\tFitting xgboost...")
   preds <- fit_xgb(df_train, df_test)
