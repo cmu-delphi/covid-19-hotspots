@@ -39,10 +39,11 @@ model.
    week, 0 otherwise)
 2. **Validation data** is the last 30 days worth of this data.
 3. **Training and test data** is the rest of this data.
-2. Explain response data
-3. Training and test and validation scheme
-4. Explain CV of l1 \& l2 penalized regression is not ideal
-5. Explain our custom ROC curve
+4. **Explain response data** (1 if 25% increase in the next 4 weeks, 0
+   otherwise)
+5. Training and test and validation scheme
+6. Explain CV of l1 \& l2 penalized regression is not ideal
+7. Explain our custom ROC curve
 
 
 ## Main script
@@ -68,10 +69,10 @@ start_day = as.Date("2020-05-01")
 end_day = as.Date("2020-08-04")
 validation_days = seq(end_day-30, end_day, by = "days")
 signals = data.frame(data_sources = data_sources, signals = signals)
-#suppressMessages({
+suppressMessages({
 mat = covidcast_signals(signals,
                         start_day = start_day, end_day = end_day, geo_type = geo_type)
-#})
+})
 mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
  t0 <- Sys.time()
 df_model <- ready_to_model(mat, lags, n_ahead, response)
@@ -100,6 +101,3 @@ predictions_laggedandfacebook <- fit_predict_models(df_traintest, lags = lags, n
 b = plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type)
 b
 ggsave(plot = b, filename = paste("figures/", toupper(geo_type), "precrecall_lag", lags,"_nahead", n_ahead, ".png", sep = ""), width = 12, height = 8, dpi = 200)
-```
-
-SH: I don't know how to make the line colors consistent

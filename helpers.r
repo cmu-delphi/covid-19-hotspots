@@ -362,6 +362,56 @@ fit_xgb <- function(df_train, df_test){
 
 
 
+
+##' Performs random forest prediction, given training & test matrices.  Outputs
+##' a vector of values the same as.
+##'
+##' @param df_train Training matrix. Must contain columns "geo_value",
+##'   "time_value", "resp", and some other columns that will be used as
+##'   covariates.
+##' @param df_test Test matrix. Same format as df_train.
+##' @param ... Additional functions to \code{randomForest()} of the
+##'   \code{randomForest} R package.
+##'
+##' @return Numeric vector the same length as \code{nrow(df_test)}.
+fit_random_forest <- function(df_train, df_test, ...){
+
+  ## Input checks (should be common for all fit_OOOO() functions
+  stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_train)))
+  stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_test)))
+
+
+  train_mat <- df_train %>% select(-geo_value, -time_value)
+  test_mat <- df_test %>% select(-geo_value, -time_value)
+
+  ## X and y matrix for randomForest() function.
+  X = train_mat %>% select(-resp)
+  y = train_mat %>% select(resp) %>% unlist()
+
+  ## Tip: start small, and scale up slowly.
+  ## rf = randomForest(X, y,sampsize=1000, ntree=5)
+  ## print(rf)
+  rf = randomForest(X, y, sampsize = 5000, ntree = 500)
+  print(rf)
+
+
+  ## (not written yet)
+  test_X = test_mat %>% select(-resp)
+  preds <- predict(model, newdata = test_X, type = "prob")
+
+  ## This seems like a good quick R random forest guide:
+  ## https://stackoverflow.com/questions/46124424/how-can-i-draw-a-roc-curve-for-a-randomforest-model-with-three-classes-in-r
+
+  ## This is about how to speed it up:
+  ## https://stackoverflow.com/questions/34706654/get-randomforest-regression-faster-in-r
+
+  ## Out checks (should be common for all fit_OOOO() functions)
+  stopifnot(length(preds) == nrow(df_test))
+
+  preds
+}
+
+
 ##' gets population for specific geo_type
 ##'
 ##' @param geo_type county, msa, state
