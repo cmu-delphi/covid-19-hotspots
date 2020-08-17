@@ -259,10 +259,10 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
   
-  # cat("\tFitting SVM...")
-  # preds <- fit_svm(df_train, df_test)
-  # predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  # cat(" Done!\n")
+  cat("\tFitting SVM...")
+  preds <- fit_svm(df_train, df_test)
+  predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  cat(" Done!\n")
   
   cat("\tFitting xgboost...")
   preds <- fit_xgb(df_train, df_test)

@@ -13,7 +13,7 @@ source("helpers.r")
 load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast")
 lags = 28
 
-geo_type = "county"
+geo_type = "state"
 response = "confirmed_7dav_incidence_prop"
 fn_response = response_diff_avg_1week
 fn_response_name = "response_diff_avg_1week"
@@ -21,7 +21,7 @@ fn_response_name = "response_diff_avg_1week"
 # n_ahead = 14
 # threshold = .25
 
-for(n_ahead in c(28)){
+for(n_ahead in c(28,21,14)){
   for(threshold in c(.25,.40)){
     to_file <- paste("\n\n\nTime: ", Sys.time(), "\nSpecifications: ", geo_type, ", lags = ", lags, " n_ahead = ", n_ahead, ", \nresponse = ", response, ", response function = ", fn_response_name, " , threshold = ", threshold, sep = "")
     cat(to_file)
