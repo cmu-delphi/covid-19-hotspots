@@ -59,7 +59,7 @@ for(n_ahead in c(28,21,14)){
     df_validation <- df_model %>% filter(time_value %in% validation_days)
     splitted <- sample_split_date(df_traintest, pct_test=0.3)
     
-    to_file <- paste("\n\tTraining set: ",nrow(splitted$df_train), " observations. 1's:", sum(splitted$df_train$resp), ", 0's:", sum(1-splitted$df_train$resp), "\n\tTest set: ",nrow(splitted$df_test), " observations. 1's:", sum(splitted$df_train$resp), ", 0's:", sum(1-splitted$df_test$resp),  sep = "")
+    to_file <- paste("\n\tTraining set: ",nrow(splitted$df_train), " observations. 1's:", sum(splitted$df_train$resp), ", 0's:", sum(1-splitted$df_train$resp), "\n\tTest set: ",nrow(splitted$df_test), " observations. 1's:", sum(splitted$df_test$resp), ", 0's:", sum(1-splitted$df_test$resp),  sep = "")
     cat(to_file)
     write(to_file, file = "counts.txt", append = TRUE)
     
