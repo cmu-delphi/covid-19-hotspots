@@ -117,7 +117,21 @@ response_diff_avg_1week <- function(x, i, threshold){
   low = mean(x[max(1,i-6):i], na.rm=TRUE)
   #cat(paste(round(low, 3), round(up,3), round((up-low)/low,3), ifelse(((up-low)/low)>(1+threshold), 1, 0), "\n", sep = " "))
   ifelse(((up-low)/low)>(1+threshold), 1, 0)
-#  ifelse((((up-low)/low)>(1+threshold))&&(up>=20), 1, 0)
+}
+
+##' considers increase if there is a 25% increase and the response at t+n_ahead has to have a minimum value of 30
+##' looks at last weeks average and the avg of the last week between today and n_ahead
+##' 
+##' @param x vector of values that will be used to determine hotspot, from 1 until i+n_ahead
+##' @param i position of the vector x that is "today"; everything from i+1:forward is not known as features
+##' @param threshold threshold on increase val to determine hotspot
+##' @return 1 if hotspot, 0 if not
+response_diff_avg_1week_min30 <- function(x, i, threshold){
+  len = length(x)
+  up = mean(x[max(i+1,len-6):len], na.rm=TRUE)
+  low = mean(x[max(1,i-6):i], na.rm=TRUE)
+  #cat(paste(round(low, 3), round(up,3), round((up-low)/low,3), ifelse(((up-low)/low)>(1+threshold), 1, 0), "\n", sep = " "))
+  ifelse((((up-low)/low)>(1+threshold))&&(up>=30), 1, 0)
 }
 
 
@@ -245,10 +259,10 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
   
-  cat("\tFitting SVM...")
-  preds <- fit_svm(df_train, df_test)
-  predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  cat(" Done!\n")
+  # cat("\tFitting SVM...")
+  # preds <- fit_svm(df_train, df_test)
+  # predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  # cat(" Done!\n")
   
   cat("\tFitting xgboost...")
   preds <- fit_xgb(df_train, df_test)

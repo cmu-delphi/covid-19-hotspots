@@ -52,8 +52,8 @@ We first collect data:
 
 ```{r collect-data}
 lags = 28
-n_ahead = 28
-geo_type = "state"
+n_ahead = 21
+geo_type = "msa"
 response = "confirmed_7dav_incidence_prop"
 fn_response = response_diff_avg_1week
 fn_response_name = "response_diff_avg_1week"
