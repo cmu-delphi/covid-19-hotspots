@@ -117,6 +117,7 @@ response_diff_avg_1week <- function(x, i, threshold){
   low = mean(x[max(1,i-6):i], na.rm=TRUE)
   #cat(paste(round(low, 3), round(up,3), round((up-low)/low,3), ifelse(((up-low)/low)>(1+threshold), 1, 0), "\n", sep = " "))
   ifelse(((up-low)/low)>(1+threshold), 1, 0)
+#  ifelse((((up-low)/low)>(1+threshold))&&(up>=20), 1, 0)
 }
 
 
@@ -520,20 +521,44 @@ plot_adapted_roc <- function(predictions, geo_type = "county", add = FALSE, df_p
     unlist()
 
   if(!add){
+    # ggplot(df_plot, aes(x = wpred1, color = model)) +
+    #   geom_vline(xintercept = precision_thresh, size = 1.5, col = "gray30", alpha = .7) +
+    #   geom_line(aes(y = wprecision), lty = 1) +
+    #   geom_line(aes(y = wrecall), lty = 2) +
+    #   ylim(0,1) +
+    #   xlim(0,1) +
+    #   theme_bw(base_size = 18) +
+    #   guides(color=guide_legend(nrow=2,byrow=TRUE)) +
+    #   ylab("population weighted precision") +
+    #   xlab("population weighted % predicted hotspots") +
+    #   scale_y_continuous(sec.axis = sec_axis(~., name = "population weighted recall (dashed)")) +
+    #   theme(legend.position = "bottom") + 
+    #   facet_wrap(~model)
     ggplot(df_plot, aes(x = wpred1, color = model)) +
-      geom_line(aes(y = wprecision), lty = 1) +
-      geom_line(aes(y = wrecall), lty = 2) +
+      geom_vline(xintercept = precision_thresh, size = 1.25, col = "gray30", alpha = .8) +
+      geom_line(aes(y = wprecision, linetype ="wprecision", size = "LaggedResponse", alpha = "LaggedResponse")) +
+      geom_line(aes(y = wrecall, linetype = "wrecall", size = "LaggedResponse", alpha = "LaggedResponse")) +
+      scale_linetype_manual(name = "",
+                         values = c( "wprecision" = 1, "wrecall" = 2),
+                         labels = c("Precision", "Recall")) +
+      scale_size_manual(name = "",
+                            values = c( "LaggedResponse" = 0.5, "FbFeatures" = 1.5),
+                            labels = c("LaggedResponse", "+FacebookFeatures")) +
+      scale_alpha_manual(name = "",
+                        values = c( "LaggedResponse" = 1, "FbFeatures" = 0.4),
+                        labels = c("LaggedResponse", "+FacebookFeatures")) +
       ylim(0,1) +
       xlim(0,1) +
-      geom_hline(yintercept = precision_thresh) +
       theme_bw(base_size = 18) +
+      guides(color=FALSE, size=guide_legend(nrow=2,byrow=TRUE), linetype=guide_legend(nrow=2,byrow=TRUE)) +
       ylab("population weighted precision") +
       xlab("population weighted % predicted hotspots") +
       scale_y_continuous(sec.axis = sec_axis(~., name = "population weighted recall (dashed)")) +
-      theme(legend.position = "bottom")
+      theme(legend.position = "bottom") + 
+      facet_wrap(~model)
   } else {
     df_plot_existing +
-      geom_line(data=df_plot,  aes(x=wpred1, y = wprecision), lty = 1, lwd = 1.5, alpha=0.4) +
-                     geom_line(data=df_plot, aes(y=wrecall), lty = 2, lwd = 1.5, alpha=0.4)
+      geom_line(data=df_plot,  aes(x=wpred1, y = wprecision, linetype ="wprecision", size = "FbFeatures", alpha ="FbFeatures")) +
+                     geom_line(data=df_plot, aes(y=wrecall, linetype = "wrecall", size = "FbFeatures", alpha = "FbFeatures"))
   }
 }
