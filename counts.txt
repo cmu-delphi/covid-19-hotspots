@@ -13,3 +13,6 @@ response = confirmed_7dav_incidence_prop, response function = response_diff_avg_
 
 	Training set: 1530 observations. 1's:543, 0's:987
 	Test set: 663 observations. 1's:107, 0's:556
+
+	Training set: 1530 observations. 1's:543, 0's:987
+	Test set: 663 observations. 1's:107, 0's:556

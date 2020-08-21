@@ -1,6 +1,7 @@
 library(dplyr)
 library(lubridate)
 library(xgboost)
+library(pROC)
 
 ##' adds NA to value if there is no signal for a particular day
 ##' 
@@ -596,5 +597,90 @@ plot_adapted_roc <- function(predictions, geo_type = "county", add = FALSE, df_p
     df_plot_existing +
       geom_line(data=df_plot,  aes(x=wpred1, y = wprecision, linetype ="wprecision", size = "FbFeatures", alpha ="FbFeatures")) +
                      geom_line(data=df_plot, aes(y=wrecall, linetype = "wrecall", size = "FbFeatures", alpha = "FbFeatures"))
+  }
+}
+
+
+##' computes population weighted precision and population weighted proportion of predicted 1's for different cutoffs
+##' considers ONE MODEL only
+##'
+##' @param df_one dataframe for one model with at least columns: value, pred, resp, population
+##' @param popweighted indicates if metrics for ROC curve should be population weighted
+##'
+##' @return dataframe with colulmns cutoff, specificity, sensitivity
+roc_onemodel <- function(df_one, popweighted = FALSE){
+  df_one <- df_one %>% arrange(value)
+  ## changing cutoffs
+  metrics <- sapply(seq(0, 1, 0.01), function(i){
+    df_temp <- df_one
+    ## binary predictions for the cutoff
+    df_temp$pred <- ifelse(df_temp$value<=i, 0, 1)
+    
+    ## specificity
+    # pop weighted
+    if(popweighted){
+      specificity = (df_temp %>% filter(pred == 0, resp == 0) %>% summarise(sum(population)) %>% unlist)/(df_temp %>% filter(resp == 0) %>% summarise(sum(population)) %>% unlist)
+      if((df_temp %>% filter(resp == 0) %>% summarise(sum(population)) %>% unlist) == 0) specificity = 1
+    } else{ # NOT pop weighted
+      specificity = (df_temp %>% filter(pred == 0, resp == 0) %>% nrow())/(df_temp %>% filter(resp == 0) %>% nrow())
+      if((df_temp %>% filter(resp == 0) %>% nrow()) == 0) specificity = 1
+    }
+    
+    ## sensitivity = recall
+    # pop weighted
+    if(popweighted){
+      sensitivity = (df_temp %>% filter(pred == 1, resp == 1) %>% summarise(sum(population)) %>% unlist)/(df_temp %>% filter(resp == 1) %>% summarise(sum(population)) %>% unlist)
+      if((df_temp %>% filter(resp == 1) %>% summarise(sum(population)) %>% unlist) == 0) sensitivity = 1
+    } else{ # NOT pop weighted
+      sensitivity = (df_temp %>% filter(pred == 1, resp == 1) %>% nrow())/(df_temp %>% filter(resp == 1) %>% nrow())
+      if((df_temp %>% filter(resp == 1) %>% nrow()) == 0) sensitivity = 1
+    }
+    
+    return(c(i, specificity, sensitivity))
+  })
+  ## transforming matrix into dataframe and naming it appropriately
+  metrics <- as.data.frame(t(metrics))
+  names(metrics) <- c("cutoff", "specificity", "sensitivity")
+  return(metrics)
+}
+
+
+##' computes metrics for all models and produces roc curves (our adapted roc with different metrics)
+##'
+##' @param predictions dataframe with cols: geo_value, time_value, resp, 
+##'                    and one column per model with predicted values whose col name is the models name
+##' @param geo_type county, msa, or state. will be used to get population data
+##'
+##' @return ggplot of model comparison curve
+plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_existing = NULL, popweighted = FALSE){
+  df_temp <- inner_join(predictions, get_population(geo_type), by = "geo_value")
+  df_temp <- reshape2::melt(df_temp, id.vars = c("geo_value", "time_value", "resp", "population"))
+  df_auc <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(function(df, ...){data.frame(auc = round(auc(response = df$resp, predictor = df$value)[1], 3))}) 
+  df_plot <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(~roc_onemodel(.x, popweighted = popweighted))
+  
+  if(!add){
+    ggplot(df_plot, aes(x = 1-specificity,y=sensitivity, color = model, size = "LaggedResponse", alpha = "LaggedResponse")) +
+      geom_line() +
+      geom_abline(slope = 1, intercept = 0, size = 1.25, col = "gray30", alpha = .8)  +
+      geom_text(data = df_auc, mapping = aes(x = rep(.5,nrow(df_auc)), y = seq(.2, .2-0.05*(nrow(df_auc)-1), -0.05), color = model, label = auc), size = 5, show.legend = FALSE) +
+      annotate(geom="text", x=.5, y=.25, label="AUC") +
+      scale_size_manual(name = "",
+                        values = c( "LaggedResponse" = 0.5, "FbFeatures" = 1.5),
+                        labels = c("LaggedResponse", "+FacebookFeatures")) +
+      scale_alpha_manual(name = "",
+                         values = c( "LaggedResponse" = 1, "FbFeatures" = 0.4),
+                         labels = c("LaggedResponse", "+FacebookFeatures")) +
+      ylim(0,1) +
+      xlim(0,1) +
+      theme_bw(base_size = 18) +
+      guides(color=guide_legend(nrow=2,byrow=TRUE), size=guide_legend(nrow=2,byrow=TRUE)) +
+      ylab("sensitivity") +
+      xlab("1-specificity") +
+      theme(legend.position = "bottom")
+  } else {
+    df_plot_existing +
+      geom_line(data=df_plot,  aes(x = 1-specificity,y=sensitivity, size = "FbFeatures", alpha ="FbFeatures")) +
+      geom_text(data = df_auc, mapping = aes(x = rep(.65,nrow(df_auc)), y = seq(.2, .2-0.05*(nrow(df_auc)-1), -0.05), color = model, label = auc), size = 5, show.legend = FALSE) +
+      annotate(geom="text", x=.65, y=.25, label="FbAUC")
   }
 }

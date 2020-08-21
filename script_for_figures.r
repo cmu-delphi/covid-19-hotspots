@@ -22,35 +22,35 @@ fn_response_name = "response_diff_avg_1week"
 # n_ahead = 28
 # threshold = .40
 
+## re-run the following every time geo_type or response changes!
+if(FALSE){
+  data_sources = c("indicator-combination", 
+                   "fb-survey", 
+                   "fb-survey", 
+                   "fb-survey", 
+                   "fb-survey")
+  signals = c("confirmed_7dav_incidence_prop", 
+              "smoothed_cli", 
+              "smoothed_nohh_cmnty_cli", 
+              "smoothed_wcli", 
+              "smoothed_hh_cmnty_cli")
+  start_day = as.Date("2020-05-01")
+  end_day = as.Date("2020-08-10")
+  validation_days = seq(end_day-30, end_day, by = "days")
+  signals = data.frame(data_sources = data_sources, signals = signals)
+  suppressMessages({
+    mat = covidcast_signals(signals,
+                            start_day = start_day, end_day = end_day, geo_type = geo_type)
+  })
+  mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
+}
+
+
 for(n_ahead in c(28,21,14)){
   for(threshold in c(.25,.40)){
     to_file <- paste("\n\n\nTime: ", Sys.time(), "\nSpecifications: ", geo_type, ", lags = ", lags, " n_ahead = ", n_ahead, ", slope = ", slope, ", \nresponse = ", response, ", response function = ", fn_response_name, " , threshold = ", threshold, sep = "")
     cat(to_file)
     write(to_file, file = "counts.txt", append = TRUE)
-    
-    if(FALSE){
-      data_sources = c("indicator-combination", 
-                       "fb-survey", 
-                       "fb-survey", 
-                       "fb-survey", 
-                       "fb-survey")
-      signals = c("confirmed_7dav_incidence_prop", 
-                  "smoothed_cli", 
-                  "smoothed_nohh_cmnty_cli", 
-                  "smoothed_wcli", 
-                  "smoothed_hh_cmnty_cli")
-      start_day = as.Date("2020-05-01")
-      end_day = as.Date("2020-08-10")
-      validation_days = seq(end_day-30, end_day, by = "days")
-      signals = data.frame(data_sources = data_sources, signals = signals)
-      suppressMessages({
-        mat = covidcast_signals(signals,
-                                start_day = start_day, end_day = end_day, geo_type = geo_type)
-      })
-      mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
-    }
-    
-    
     
     
     t0 <- Sys.time()
@@ -82,6 +82,13 @@ for(n_ahead in c(28,21,14)){
     b
     # ggsave(plot = b, filename = paste("figures/", toupper(geo_type), "precrecall_lag", lags,"_nahead", n_ahead, ".png", sep = ""), width = 12, height = 8, dpi = 200)
     ggsave(plot = b, filename = paste("figures/", fn_response_name,"/", geo_type, "_resp", threshold*100, "_lag", lags,"_nahead", n_ahead, "_slope", slope, ".png", sep = ""), width = 12, height = 8, dpi = 200) 
+  
+    a = plot_roc(predictions_onlylaggedresponse, geo_type = geo_type, popweighted = FALSE)
+    a
+    b = plot_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type, popweighted = FALSE)
+    b
+    ggsave(plot = b, filename = paste("figures/", fn_response_name,"/", geo_type, "_resp", threshold*100, "_lag", lags,"_nahead", n_ahead, "_slope", slope, "ROC.png", sep = ""), width = 12, height = 8, dpi = 200) 
+    
   }
 }
 
