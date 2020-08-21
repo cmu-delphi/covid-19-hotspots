@@ -33,7 +33,8 @@ add_NAval_missing_dates <- function(df){
 ##' @param lags number of past values to include in the data frame; for time t, dataframe will have in one row X_t until X_{t-lag}
 ##' @param name variable name that will be used for the lagged features
 ##' @return dataframe with lagged features for one geo_value
-lagged_features_onegeo <- function(df, lags, name = "feature"){
+lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
+  df <- df %>% arrange(time_value)
   signal <- df$value
   timestamp <- df$time_value
   
@@ -50,11 +51,32 @@ lagged_features_onegeo <- function(df, lags, name = "feature"){
   ## it's reasonable to interpolate the TS as long as there are not many sequential missing obs
   
   out <- data.frame(time_value = timestamp[(lags+1):len])
-  ## adding lagged feature from t-0, t-1, t-2, until t-lags
-  for(i in 0:lags){
-    out <- suppressMessages(bind_cols(out, signal[(lags+1-i):(len-i)]))
+  
+  if(!slopes){
+    ## adding lagged feature from t-0, t-1, t-2, until t-lags
+    for(i in 0:lags){
+      out <- suppressMessages(bind_cols(out, signal[(lags+1-i):(len-i)]))
+    }
+    names(out) = c("time_value", paste(name, "_lag", 0:lags, sep = ""))
   }
-  names(out) = c("time_value", paste(name, "_lag", 0:lags, sep = ""))
+  if(slopes){
+    npoints = lags+1
+    nfeats = floor(npoints/3) ## 3 is a magic number. will construct a new feature (new slope) every 3 points
+    limits_lm = round(seq(lags+1, 1, length.out = nfeats+1))
+    out[[paste(name, "_lag0", sep = "")]] = signal[(lags+1):(len)]
+    for(j in 1:nfeats){
+      aux <- rep(NA, nrow(out))
+      row_pos <- 1
+      for(i in (lags+1):(len)){
+        signal_vec <- signal[i:(limits_lm[j+1]+row_pos-1)]
+        x <- (1:length(signal_vec))
+        aux[row_pos] <- coef(lm(signal_vec~x))[2]
+        row_pos <- row_pos + 1
+      }
+      out[[paste(name, "_slope", j, sep = "")]] <- aux
+    }
+    
+  }
   
   return(out)
 }
@@ -188,11 +210,11 @@ get_geoinfo <- function(df_all, geo_value){
 ##' @param response name of the response variable in mat
 ##' @param fn_response logic for computing response, based on a provided response vector whose all points will be used for this computation
 ##' @param threshold threshold on increase val to determine hotspot
-ready_to_model <- function(mat, lags, n_ahead, response = "confirmed_7dav_incidence_num", fn_response = response_diff_avg_1week, threshold = .25){
+ready_to_model <- function(mat, lags, n_ahead, response = "confirmed_7dav_incidence_num", slope = FALSE, fn_response = response_diff_avg_1week, threshold = .25){
   ## construct lagged features for all available signals, including lagged responses
   ## removes all NAs 
   # TODO deal with NAs
-  features <- mat %>% plyr::ddply(c("signal", "data_source", "geo_value"), lagged_features_onegeo, lags = lags) %>% na.omit()
+  features <- mat %>% plyr::ddply(c("signal", "data_source", "geo_value"), lagged_features_onegeo, lags = lags, slope = slope) %>% na.omit()
   ## construct hotspot indicator in the resp variable
   responses <- mat %>% filter(signal == response) %>% plyr::ddply(c("signal", "data_source", "geo_value"), response_onegeo,
                                                                   n_ahead = n_ahead, fn_response = fn_response, threshold = threshold) %>% na.omit()

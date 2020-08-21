@@ -14,16 +14,17 @@ load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packag
 lags = 28
 
 geo_type = "state"
+slope = TRUE
 response = "confirmed_7dav_incidence_prop"
 fn_response = response_diff_avg_1week
 fn_response_name = "response_diff_avg_1week"
 
-# n_ahead = 14
-# threshold = .25
+# n_ahead = 28
+# threshold = .40
 
 for(n_ahead in c(28,21,14)){
   for(threshold in c(.25,.40)){
-    to_file <- paste("\n\n\nTime: ", Sys.time(), "\nSpecifications: ", geo_type, ", lags = ", lags, " n_ahead = ", n_ahead, ", \nresponse = ", response, ", response function = ", fn_response_name, " , threshold = ", threshold, sep = "")
+    to_file <- paste("\n\n\nTime: ", Sys.time(), "\nSpecifications: ", geo_type, ", lags = ", lags, " n_ahead = ", n_ahead, ", slope = ", slope, ", \nresponse = ", response, ", response function = ", fn_response_name, " , threshold = ", threshold, sep = "")
     cat(to_file)
     write(to_file, file = "counts.txt", append = TRUE)
     
@@ -53,7 +54,7 @@ for(n_ahead in c(28,21,14)){
     
     
     t0 <- Sys.time()
-    df_model <- ready_to_model(mat, lags, n_ahead, response, fn_response, threshold)
+    df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold)
     Sys.time()-t0
     df_traintest <- df_model %>% filter(!(time_value %in% validation_days))
     df_validation <- df_model %>% filter(time_value %in% validation_days)
@@ -80,7 +81,7 @@ for(n_ahead in c(28,21,14)){
     b = plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type)
     b
     # ggsave(plot = b, filename = paste("figures/", toupper(geo_type), "precrecall_lag", lags,"_nahead", n_ahead, ".png", sep = ""), width = 12, height = 8, dpi = 200)
-    ggsave(plot = b, filename = paste("figures/", fn_response_name,"/", geo_type, "_resp", threshold*100, "_lag", lags,"_nahead", n_ahead, ".png", sep = ""), width = 12, height = 8, dpi = 200) 
+    ggsave(plot = b, filename = paste("figures/", fn_response_name,"/", geo_type, "_resp", threshold*100, "_lag", lags,"_nahead", n_ahead, "_slope", slope, ".png", sep = ""), width = 12, height = 8, dpi = 200) 
   }
 }
 

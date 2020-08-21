@@ -1,0 +1,15 @@
+
+
+
+Time: 2020-08-21 11:18:19
+Specifications: state, lags = 28 n_ahead = 28, slope = TRUE, 
+response = confirmed_7dav_incidence_prop, response function = response_diff_avg_1week , threshold = 0.4
+
+
+
+Time: 2020-08-21 11:22:52
+Specifications: state, lags = 28 n_ahead = 28, slope = TRUE, 
+response = confirmed_7dav_incidence_prop, response function = response_diff_avg_1week , threshold = 0.25
+
+	Training set: 1530 observations. 1's:543, 0's:987
+	Test set: 663 observations. 1's:107, 0's:556
