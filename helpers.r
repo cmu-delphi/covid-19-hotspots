@@ -109,9 +109,38 @@ response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg, thresh
   for(i in 1:(len-n_ahead+1)){
     out$resp[i] <- fn_response(signal[1:(i+n_ahead)], i, threshold, ...)
   }
-  
+
+  ## ## Justin's temporary addition:
+  ## ## Go back (up to 60 days), and if x% of 60 previous days were a hot spot,
+  ## ## don't return. Use default of x=70
+  ## out$resp_new = out$resp
+  ## for(ii in 1:(len-n_ahead+1)){
+  ##   ii = len-n_ahead+1
+  ##   start = pmax(ii - 59, 1)
+  ##   hot_past = see_past_hotness(out$resp[start:ii])
+  ##   out$resp_new[i] <- (out$resp[ii] & !hot_past)
+  ## }
+  ## out$resp = out$resp_new
+  ## print(out$resp)
+  ## ## If you're coding and you need a break, see this: https://xkcd.com/2346/
+
   return(out)
 }
+
+##' From a vector of 0's and 1's, see if at least \code{perc} percent are 1's.
+##'
+##' @param vec vector of 0's and 1's
+##' @param perc percentage of 1's required
+##'
+##' @return 0 or 1
+see_past_hotness <- function(vec, perc = 0.7){
+  if(any(is.na(vec))){ vec = vec[which(!is.na(vec))]  }
+  stopifnot(all(vec %in% c(0, 1)))
+  val = (sum(vec) > length(vec) * perc)
+  stopifnot((val %in% c(0, 1)) & length(val)==1 )
+  val
+}
+
 
 ##' considers increase if there is a 25% increase
 ##' looks at last weeks average and compare to average of today+1 until today+n_ahead

@@ -1,0 +1,165 @@
+---
+title: Predicting hotspots
+author: Justin, Natalia 
+date: Aug 26, 2020
+output:
+  html_document:
+    code_folding: show
+    toc: true
+    toc_float: true
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=FALSE, cache=TRUE,
+                      warning=FALSE, message=FALSE)
+library(ggplot2)
+library(covidcast)
+library(tidyverse)
+library(tidyr) ## for pivot_wider() ?
+library(devtools)
+library(glmnet)
+source("helpers.r")
+
+## Location of your covidcast R package.
+load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
+## load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast")
+```
+
+## Goal
+
+Use various classifiers (e.g. l1-penalized and ridge logistic regression, and
+SVM, xgboost), for a hotspot detection model.
+
+## Data and model 
+
+1. **Data** Between 2020-05-01 and 2020-08-04, take the 7-day case proportion,
+   and various FB surveys (smoothed individual, smoothed community survey,
+   smoothed household survey, smoothed weighted household survey). Also, add
+   features that are "slopes from the past x days", where $x \in
+   \{5,10,15,20..\.$.
+
+2. **Response** The response is formed as (1 if 25% increase in the next week, 0
+   otherwise) More about this soon.
+
+3. **Validation data** are some left-out counties (not times).
+
+4. **Training and test data** are the rest of the times. Similar proportion of
+   "hot" counties in both item 2 and 3.
+
+5. **Response data** (1 if 25% increase in the next K weeks compared to the past
+   1 week; 0 otherwise; Additionally, 0 if your county would have been deemed a
+   hotspot).
+
+6. **Models** L1- and L2- penalized logistic regression, SVM, xgboost, and more.
+
+7. **Cross-validation** is done in a block-wise fashion; consecutive time blocks
+   are used as test sets.
+
+
+
+## Code
+
+
+Some variables and functions:
+
+- `lags` are the number of lagged values taken of the JHU cases and FB.
+- `n_ahead` is the number of days we want to look ahead, in forming the response
+  data (0 or 1) for hotspot detection. 
+- We compare the $\bar y_2$ average of 1(?) week period ending `n_ahead` days
+  from *now*, to the average $\bar y_1$ of the past 1 week period (again, from
+  *now*).
+- We deem one time & region a "hotspot" if $\bar y_1$ is larger than $\bar y_2$
+  by `threshold` percent (say, 25%).
+- `covidcast_signals()` from the R package `covidcast` allows the data
+  collection of multiple sources.
+- `read_to_model()` further cleans + readies the data to feed into functions
+  like `glmnet()`.
+
+First, we load the data.
+
+```{r read-data}
+## Setup
+lags = 28
+geo_type = "county"
+response = "confirmed_7dav_incidence_prop"
+fn_response = response_diff_avg_1week
+fn_response_name = "response_diff_avg_1week"
+
+## Read in data once
+data_sources = c("indicator-combination", 
+                 "fb-survey", 
+                 "fb-survey", 
+                 "fb-survey", 
+                 "fb-survey")
+signals = c("confirmed_7dav_incidence_prop", 
+            "smoothed_cli", 
+            "smoothed_nohh_cmnty_cli", 
+            "smoothed_wcli", 
+            "smoothed_hh_cmnty_cli")
+start_day = as.Date("2020-05-01")
+end_day = as.Date("2020-08-10")
+validation_days = seq(end_day-30, end_day, by = "days")
+signals = data.frame(data_sources = data_sources, signals = signals)
+suppressMessages({
+  mat = covidcast_signals(signals,
+                          start_day = start_day, end_day = end_day, geo_type = geo_type)
+})
+mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
+```
+
+Now, fit the hot-spot models and visualize the model performances.
+
+```{r analyze}
+for(n_ahead in c(28,21,14)){
+  for(threshold in c(.25,.40)){
+
+    ## Write some meta information to file (optional)
+    to_file <- paste("\n\n\nTime: ", Sys.time(), "\nSpecifications: ", geo_type, ", lags = ", lags, " n_ahead = ", n_ahead, ", slope = ", slope, ", \nresponse = ", response, ", response function = ", fn_response_name, " , threshold = ", threshold, sep = "")
+    cat(to_file)
+    write(to_file, file = "counts.txt", append = TRUE)
+    
+    ## Make a y|X model matrix ready to model
+    t0 <- Sys.time()
+    df_model <- ready_to_model(mat, lags, n_ahead, response, TRUE, fn_response, threshold)
+    Sys.time()-t0
+    df_traintest <- df_model %>% filter(!(time_value %in% validation_days))
+    df_validation <- df_model %>% filter(time_value %in% validation_days)
+    splitted <- sample_split_date(df_traintest, pct_test=0.3)
+    
+
+    ## Write some meta information to file (optional)
+    to_file <- paste("\n\tTraining set: ",nrow(splitted$df_train), " observations. 1's:", sum(splitted$df_train$resp), ", 0's:", sum(1-splitted$df_train$resp), "\n\tTest set: ",nrow(splitted$df_test), " observations. 1's:", sum(splitted$df_test$resp), ", 0's:", sum(1-splitted$df_test$resp),  sep = "")
+    cat(to_file)
+    write(to_file, file = "counts.txt", append = TRUE)
+    
+    
+    ######################################
+    ## Model with lagged responses only ##
+    ###################################### 
+    predictions_onlylaggedresponse <- fit_predict_models(splitted$df_train %>% select(geo_value, time_value, resp, contains(response)), 
+                                                         splitted$df_test %>% select(geo_value, time_value, resp, contains(response)),
+                                                         lags = lags, n_ahead = n_ahead)
+    a = plot_adapted_roc(predictions_onlylaggedresponse, geo_type = geo_type)
+    a
+    
+    ####################################################
+    ## Model with lagged responses + facebook signals ##
+    ####################################################
+    predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test, lags = lags, n_ahead = n_ahead)
+    b = plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type)
+    b
+
+    # ggsave(plot = b, filename = paste("figures/", toupper(geo_type), "precrecall_lag", lags,"_nahead", n_ahead, ".png", sep = ""), width = 12, height = 8, dpi = 200)
+    ggsave(plot = b, filename = paste("figures/", fn_response_name,"/", geo_type, "_resp", threshold*100, "_lag", lags,"_nahead", n_ahead, "_slope", slope, ".png", sep = ""), width = 12, height = 8, dpi = 200) 
+
+    ## Also plot regular ROC urves
+    a = plot_roc(predictions_onlylaggedresponse, geo_type = geo_type, popweighted = FALSE)
+    a
+    b = plot_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type, popweighted = FALSE)
+    b
+    ggsave(plot = b, filename = paste("figures/", fn_response_name,"/", geo_type, "_resp", threshold*100, "_lag", lags,"_nahead", n_ahead, "_slope", slope, "ROC.png", sep = ""), width = 12, height = 8, dpi = 200) 
+    
+  }
+}
+
+```

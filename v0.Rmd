@@ -21,8 +21,8 @@ library(glmnet)
 source("helpers.r")
 
 ## Location of your covidcast R package.
-## load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
- load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast")
+load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
+## load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast")
 ```
 
 ## Goal
@@ -39,11 +39,11 @@ model.
    week, 0 otherwise)
 2. **Validation data** is the last 30 days worth of this data.
 3. **Training and test data** is the rest of this data.
-4. **Explain response data** (1 if 25% increase in the next 4 weeks, 0
-   otherwise)
-5. Training and test and validation scheme
-6. Explain CV of l1 \& l2 penalized regression is not ideal
-7. Explain our custom ROC curve
+4. **Explain response data** (1 if 25% increase in the next K weeks compared to
+   the past 1 week; 0 otherwise).
+5. **Models** L1- and L2- penalized logistic regression, SVM, xgboost.
+5. **Cross-validation** is done in a block-wise fashion   Explain CV of l1 \& l2 penalized regression is not ideal
+6. Explain our custom ROC curve
 
 
 ## Main script
@@ -53,15 +53,25 @@ We first collect data:
 ```{r collect-data}
 lags = 28
 n_ahead = 21
-geo_type = "msa"
+geo_type = "state"
 response = "confirmed_7dav_incidence_prop"
 fn_response = response_diff_avg_1week
 fn_response_name = "response_diff_avg_1week"
 threshold = .40
 
-to_file <- paste("\n\n\nTime: ", Sys.time(), "\nSpecifications: ", geo_type, ", lags = ", lags, " n_ahead = ", n_ahead, ", \nresponse = ", response, ", response function = ", fn_response_name, " , threshold = ", threshold, sep = "")
+## Write some meta information to a  file
+to_file <- paste("\n\n\nTime: ",
+                 Sys.time(),
+                 "\nSpecifications: ",  geo_type,
+                 ", lags = ",  lags,
+                 " n_ahead = ",  n_ahead,
+                 ", \nresponse = ",  response,
+                 ", response function = ",  fn_response_name,
+                 " , threshold = ",  threshold,
+                 sep = "")
 write(to_file, file = "counts.txt", append = TRUE)
 
+## Data sources
 data_sources = c("indicator-combination", 
                  "fb-survey", 
                  "fb-survey", 
@@ -76,19 +86,30 @@ start_day = as.Date("2020-05-01")
 end_day = as.Date("2020-08-04")
 validation_days = seq(end_day-30, end_day, by = "days")
 signals = data.frame(data_sources = data_sources, signals = signals)
+
+## Form dataset by pulling from the covidcast API
 suppressMessages({
 mat = covidcast_signals(signals,
                         start_day = start_day, end_day = end_day, geo_type = geo_type)
 })
 mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
  t0 <- Sys.time()
+source("helpers.r")
 df_model <- ready_to_model(mat, lags, n_ahead, response, fn_response, threshold)
- Sys.time()-t0
+ Sys.time() - t0 %>% print()
+
+## Split data into two: training&test and validation set.
 df_traintest <- df_model %>% filter(!(time_value %in% validation_days))
 df_validation <- df_model %>% filter(time_value %in% validation_days)
 splitted <- sample_split_date(df_traintest, pct_test=0.3)
 
-to_file <- paste("\n\tTraining set: ",nrow(splitted$df_train), " observations. 1's:", sum(splitted$df_train$resp), ", 0's:", sum(1-splitted$df_train$resp), "\n\tTest set: ",nrow(splitted$df_test), " observations. 1's:", sum(splitted$df_train$resp), ", 0's:", sum(1-splitted$df_test$resp),  sep = "")
+## Write some more meta information to a text file
+to_file <- paste("\n\tTraining set: ",nrow(splitted$df_train),
+                 " observations. 1's:", sum(splitted$df_train$resp),
+                 ", 0's:", sum(1-splitted$df_train$resp),
+                 "\n\tTest set: ",nrow(splitted$df_test),
+                 " observations. 1's:", sum(splitted$df_train$resp),
+                 ", 0's:", sum(1-splitted$df_test$resp),  sep = "")
 write(to_file, file = "counts.txt", append = TRUE)
 ```
 
@@ -112,6 +133,6 @@ a
 predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test, lags = lags, n_ahead = n_ahead)
 b = plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type)
 b
-ggsave(plot = b, filename = paste("figures/", toupper(geo_type), "precrecall_lag", lags,"_nahead", n_ahead, ".png", sep = ""), width = 12, height = 8, dpi = 200)
+ggsave(plot = b, filename = paste("new-figures/", toupper(geo_type), "precrecall_lag", lags,"_nahead", n_ahead, ".png", sep = ""), width = 12, height = 8, dpi = 200)
 ## ggsave(plot = b, filename = paste("figures/", fn_response_name,"_", threshold*100, "/", toupper(geo_type), "precrecall_lag", lags,"_nahead", n_ahead, ".png", sep = ""), width = 12, height = 8, dpi = 200) 
 ```
