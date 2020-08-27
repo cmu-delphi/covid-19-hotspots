@@ -694,11 +694,9 @@ plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_exis
       geom_text(data = df_auc, mapping = aes(x = rep(.5,nrow(df_auc)), y = seq(.2, .2-0.05*(nrow(df_auc)-1), -0.05), color = model, label = auc), size = 5, show.legend = FALSE) +
       annotate(geom="text", x=.5, y=.25, label="AUC") +
       scale_size_manual(name = "",
-                        values = c( "LaggedResponse" = 0.5, "FbFeatures" = 1.5),
-                        labels = c("LaggedResponse", "+FacebookFeatures")) +
+                        values = c( "LaggedResponse" = 0.5, "FbFeatures" = 1.5)) +
       scale_alpha_manual(name = "",
-                         values = c( "LaggedResponse" = 1, "FbFeatures" = 0.4),
-                         labels = c("LaggedResponse", "+FacebookFeatures")) +
+                         values = c( "LaggedResponse" = 1, "FbFeatures" = 0.4)) +
       ylim(0,1) +
       xlim(0,1) +
       theme_bw(base_size = 18) +
