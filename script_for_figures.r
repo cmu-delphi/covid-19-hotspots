@@ -56,9 +56,13 @@ for(n_ahead in c(28,21,14)){
     t0 <- Sys.time()
     df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold)
     Sys.time()-t0
+    ## add census features (currently only population)
+    # df_model <- add_geoinfo(df_model, geo_type)
+    ## divide data into train, test, and validation sets
     df_traintest <- df_model %>% filter(!(time_value %in% validation_days))
     df_validation <- df_model %>% filter(time_value %in% validation_days)
-    splitted <- sample_split_date(df_traintest, pct_test=0.3)
+    #splitted <- sample_split_date(df_traintest, pct_test=0.3)
+    splitted <- list(df_train = df_traintest, df_test = df_validation)
     
     to_file <- paste("\n\tTraining set: ",nrow(splitted$df_train), " observations. 1's:", sum(splitted$df_train$resp), ", 0's:", sum(1-splitted$df_train$resp), "\n\tTest set: ",nrow(splitted$df_test), " observations. 1's:", sum(splitted$df_test$resp), ", 0's:", sum(1-splitted$df_test$resp),  sep = "")
     cat(to_file)

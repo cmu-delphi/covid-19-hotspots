@@ -27,13 +27,16 @@ add_NAval_missing_dates <- function(df){
   })
 }
 
-##' creates a dataframe with lagged featuresfor one geo_value
+##' creates a dataframe with lagged information for one geo_value
+##' if slopes = FALSE, creates lagged features 
+##' if slopes = TRUE, creates slopes of the time tendencies over t and the past 3, 6, 9... days + adds feature value at time t
 ##' assumes that time column has points for all dates!!!
 ##' 
 ##' @param df dataframe with ONE geo_value and ONE feature (which will be lagged), columns val, time
 ##' @param lags number of past values to include in the data frame; for time t, dataframe will have in one row X_t until X_{t-lag}
 ##' @param name variable name that will be used for the lagged features
-##' @return dataframe with lagged features for one geo_value
+##' @param slopes if TRUE, returns a dataframe with slopes based on the past feature values and if FALSE, returs raw lagged features
+##' @return dataframe with lagged features for one geo_value OR slopes
 lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
   df <- df %>% arrange(time_value)
   signal <- df$value
@@ -49,7 +52,8 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
   if(!is.Date(timestamp)) timestamp <- as.Date(timestamp)
   
   ## TODO if there's NA in signal, treat it BEFORE creating lagged matrix. needs helper function. 
-  ## it's reasonable to interpolate the TS as long as there are not many sequential missing obs
+  ## I think it's reasonable to interpolate the TS as long as there are not many sequential missing obs
+  ## low priority
   
   out <- data.frame(time_value = timestamp[(lags+1):len])
   
@@ -157,7 +161,7 @@ response_diff_avg <- function(x, i, threshold){
 }
 
 ##' considers increase if there is a 25% increase
-##' looks at last weeks average and the avg of the last week between today and n_ahead
+##' looks at (last weeks average) and the (avg of the last week between today and n_ahead)
 ##' 
 ##' @param x vector of values that will be used to determine hotspot, from 1 until i+n_ahead
 ##' @param i position of the vector x that is "today"; everything from i+1:forward is not known as features
@@ -172,7 +176,7 @@ response_diff_avg_1week <- function(x, i, threshold){
 }
 
 ##' considers increase if there is a 25% increase and the response at t+n_ahead has to have a minimum value of 30
-##' looks at last weeks average and the avg of the last week between today and n_ahead
+##' looks at (last weeks average) and the (avg of the last week between today and n_ahead)
 ##' 
 ##' @param x vector of values that will be used to determine hotspot, from 1 until i+n_ahead
 ##' @param i position of the vector x that is "today"; everything from i+1:forward is not known as features
@@ -189,8 +193,7 @@ response_diff_avg_1week_min30 <- function(x, i, threshold){
 
 
 ##' considers increase if there is a 25% increase
-##' very simple function, only looks at today's value and target value
-##' we should write a better function
+##' very simple function, only looks at today's value and target value, no averages
 ##' 
 ##' @param x vector of values that will be used to determine hotspot, from 1 until i+n_ahead
 ##' @param i position of the vector x that is "today"; everything from i+1:forward is not known as features
@@ -201,14 +204,22 @@ response_diff <- function(x, i, threshold){
   ifelse((x[len]-x[i])/x[i]>(1+threshold), 1, 0)
 }
 
-## TODO
-get_geoinfo <- function(df_all, geo_value){
+##' considers increase if there is a 25% increase
+##' very simple function, only looks at today's value and target value, no averages
+##' 
+##' TODO add more geo information to the features other than the geo_value's population
+##' 
+##' @param df_all any dataframe that we want to add geographical-level information
+##'               it should have the geo_value column!!!
+##' @param geo_type one of state, msa, county 
+##' @return inputted dataframe with geographical location information columns 
+add_geoinfo <- function(df_all, geo_type){
   if(geo_type == "county"){
     county_pop = county_census %>% 
       transmute (geo_value = 1000*as.numeric(STATE) + as.numeric(COUNTY),
                  population = POPESTIMATE2019)
     county_pop$geo_value <- sprintf("%05d", county_pop$geo_value)
-    return(county_pop)
+    return(inner_join(df_all, county_pop, by = "geo_value"))
   }
   if(geo_type == "state"){
     state_pop <- state_census %>% 
@@ -221,12 +232,12 @@ get_geoinfo <- function(df_all, geo_value){
     state_pop <- state_pop %>% 
       inner_join(state_crosswalk, by = c("geo_value" = "fips")) %>% 
       select(geo_value = abb, population)
-    return(state_pop)
+    return(inner_join(df_all, state_pop, by = "geo_value"))
   }
   if(geo_type == "msa"){
-    return(msa_census %>% 
+    return(inner_join(df_all, msa_census %>% 
              transmute(geo_value = as.character(CBSA),
-                       population = POPESTIMATE2019))
+                       population = POPESTIMATE2019), by = "geo_value"))
   }
 }
 
@@ -240,10 +251,11 @@ get_geoinfo <- function(df_all, geo_value){
 ##' @param response name of the response variable in mat
 ##' @param fn_response logic for computing response, based on a provided response vector whose all points will be used for this computation
 ##' @param threshold threshold on increase val to determine hotspot
+##' @param slopes if TRUE, produces a dataframe with slopes based on the past feature values and if FALSE, produces raw lagged features
+##' @return dataset ready to be fed to fitting functions
 ready_to_model <- function(mat, lags, n_ahead, response = "confirmed_7dav_incidence_num", slope = FALSE, fn_response = response_diff_avg_1week, threshold = .25){
   ## construct lagged features for all available signals, including lagged responses
-  ## removes all NAs 
-  # TODO deal with NAs
+  # TODO deal with potential NAs?
   features <- mat %>% plyr::ddply(c("signal", "data_source", "geo_value"), lagged_features_onegeo, lags = lags, slope = slope) %>% na.omit()
   ## construct hotspot indicator in the resp variable
   responses <- mat %>% filter(signal == response) %>% plyr::ddply(c("signal", "data_source", "geo_value"), response_onegeo,
@@ -254,7 +266,7 @@ ready_to_model <- function(mat, lags, n_ahead, response = "confirmed_7dav_incide
                           values_from = all_of(names_to_pivot)) %>% ungroup
   ## join features and response
   mat_to_model <- inner_join(features, responses %>% select(-signal, -data_source), by = c("geo_value", "time_value")) %>% na.omit()
-  ## TODO add census features
+  
   return(mat_to_model)
 }
 
@@ -291,9 +303,12 @@ make_foldid <- function(x, nfold){
 ##' fit models and produce test set predictions
 ##' currently: lasso, ridge
 ##' 
-##' @param df_model 
+##' @param df_train 
+##' @param df_test
 ##' @param lags number of past values to include in the data frame; for time t, dataframe will have in one row X_t until X_{t-lag}
 ##' @param n_ahead number of days ahead that response will be computed
+##' @param response string just for rendering plots later on
+##' @return 
 fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "confirmed_7dav_incidence_num"){
   cat("Fitting models:\n")
 
@@ -305,12 +320,11 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   cat(" Done!\n")
 
   cat("\tFitting Ridge...")
-  ### more models here!!! SVM, xgboost... add predictions as a col to predictions
-  ## eg ridge:
   preds <- fit_logistic_regression(df_train, df_test, nfold = 10, alpha = 1)
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
   
+  #### IF 
   cat("\tFitting SVM...")
   preds <- fit_svm(df_train, df_test)
   predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
@@ -320,6 +334,8 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   preds <- fit_xgb(df_train, df_test)
   predictions[[paste("xgb_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
+  
+  ### can add more models here!!! add \hat{y} as a col to |predictions|
   
   return(predictions)
 }
@@ -412,6 +428,7 @@ fit_svm <- function(df_train, df_test, ...){
 
 ##' Performs xgboost prediction, given training & test matrices.
 ##' Outputs a vector of values the same as y.
+##' NOTE: this does not perform CV!!! it just uses mainly default hyperparameter values. CV would take time to run and we have higher priority things to worry for now
 ##'
 ##' @param df_train Training matrix. Must contain columns "geo_value",
 ##'   "time_value", "resp", and some other columns that will be used as
@@ -539,7 +556,7 @@ get_population <- function(geo_type){
   }
 }
 
-##' computes population weighted precision and population weighted proportion of predicted 1's for different cutoffs
+##' computes population weighted precision, population weighted recall, and population weighted proportion of predicted 1's for different cutoffs
 ##' considers ONE MODEL only
 ##'
 ##' @param df_one dataframe for one model with at least columns: value, pred, resp, population
@@ -574,6 +591,8 @@ adapted_roc_onemodel <- function(df_one,...){
 ##' @param predictions dataframe with cols: geo_value, time_value, resp, 
 ##'                    and one column per model with predicted values whose col name is the models name
 ##' @param geo_type county, msa, or state. will be used to get population data
+##' @param add if TRUE, adds current curves to an existing plot
+##' @param df_plot_existing plot that will have mroe curves added to it, and these new curves will be labeled as FbFeatures
 ##'
 ##' @return ggplot of model comparison curve
 plot_adapted_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_existing = NULL){
@@ -587,19 +606,6 @@ plot_adapted_roc <- function(predictions, geo_type = "county", add = FALSE, df_p
     unlist()
 
   if(!add){
-    # ggplot(df_plot, aes(x = wpred1, color = model)) +
-    #   geom_vline(xintercept = precision_thresh, size = 1.5, col = "gray30", alpha = .7) +
-    #   geom_line(aes(y = wprecision), lty = 1) +
-    #   geom_line(aes(y = wrecall), lty = 2) +
-    #   ylim(0,1) +
-    #   xlim(0,1) +
-    #   theme_bw(base_size = 18) +
-    #   guides(color=guide_legend(nrow=2,byrow=TRUE)) +
-    #   ylab("population weighted precision") +
-    #   xlab("population weighted % predicted hotspots") +
-    #   scale_y_continuous(sec.axis = sec_axis(~., name = "population weighted recall (dashed)")) +
-    #   theme(legend.position = "bottom") + 
-    #   facet_wrap(~model)
     ggplot(df_plot, aes(x = wpred1, color = model)) +
       geom_vline(xintercept = precision_thresh, size = 1.25, col = "gray30", alpha = .8) +
       geom_line(aes(y = wprecision, linetype ="wprecision", size = "LaggedResponse", alpha = "LaggedResponse")) +
@@ -608,11 +614,9 @@ plot_adapted_roc <- function(predictions, geo_type = "county", add = FALSE, df_p
                          values = c( "wprecision" = 1, "wrecall" = 2),
                          labels = c("Precision", "Recall")) +
       scale_size_manual(name = "",
-                            values = c( "LaggedResponse" = 0.5, "FbFeatures" = 1.5),
-                            labels = c("LaggedResponse", "+FacebookFeatures")) +
+                            values = c( "LaggedResponse" = 0.5, "FbFeatures" = 1.5)) +
       scale_alpha_manual(name = "",
-                        values = c( "LaggedResponse" = 1, "FbFeatures" = 0.4),
-                        labels = c("LaggedResponse", "+FacebookFeatures")) +
+                        values = c( "LaggedResponse" = 1, "FbFeatures" = 0.4)) +
       ylim(0,1) +
       xlim(0,1) +
       theme_bw(base_size = 18) +
@@ -630,7 +634,7 @@ plot_adapted_roc <- function(predictions, geo_type = "county", add = FALSE, df_p
 }
 
 
-##' computes population weighted precision and population weighted proportion of predicted 1's for different cutoffs
+##' computes sensitivity and specificity (population weighted or not) for different cutoffs
 ##' considers ONE MODEL only
 ##'
 ##' @param df_one dataframe for one model with at least columns: value, pred, resp, population
@@ -640,7 +644,7 @@ plot_adapted_roc <- function(predictions, geo_type = "county", add = FALSE, df_p
 roc_onemodel <- function(df_one, popweighted = FALSE){
   df_one <- df_one %>% arrange(value)
   ## changing cutoffs
-  metrics <- sapply(seq(0, 1, 0.01), function(i){
+  metrics <- sapply(seq(0, 1, 0.005), function(i){
     df_temp <- df_one
     ## binary predictions for the cutoff
     df_temp$pred <- ifelse(df_temp$value<=i, 0, 1)
@@ -679,6 +683,9 @@ roc_onemodel <- function(df_one, popweighted = FALSE){
 ##' @param predictions dataframe with cols: geo_value, time_value, resp, 
 ##'                    and one column per model with predicted values whose col name is the models name
 ##' @param geo_type county, msa, or state. will be used to get population data
+##' @param add if TRUE, adds current curves to an existing plot
+##' @param df_plot_existing plot that will have mroe curves added to it, and these new curves will be labeled as FbFeatures
+##' @param popweighted indicates if metrics for ROC curve should be population weighted
 ##'
 ##' @return ggplot of model comparison curve
 plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_existing = NULL, popweighted = FALSE){
