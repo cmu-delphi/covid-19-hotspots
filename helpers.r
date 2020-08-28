@@ -33,7 +33,7 @@ add_NAval_missing_dates <- function(df){
 ##' assumes that time column has points for all dates!!!
 ##' 
 ##' @param df dataframe with ONE geo_value and ONE feature (which will be lagged), columns val, time
-##' @param lags number of past values to include in the data frame; for time t, dataframe will have in one row X_t until X_{t-lag}
+##' @param lags number of past values to include in the data frame; for time t, dataframe will have in one row \eqn{X_t} until \eqn{X_{t-lag}}.
 ##' @param name variable name that will be used for the lagged features
 ##' @param slopes if TRUE, returns a dataframe with slopes based on the past feature values and if FALSE, returs raw lagged features
 ##' @return dataframe with lagged features for one geo_value OR slopes
@@ -80,7 +80,6 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
       }
       out[[paste(name, "_slope", j, sep = "")]] <- aux
     }
-    
   }
   
   return(out)
@@ -88,11 +87,17 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
 
 ##' constructs response variable for one geo_value using the provided function
 ##' 
-##' @param df dataframe with ONE geo_value and ONE feature (which will be used to construct the binary response), columns val, time
+##' @param df dataframe with ONE geo_value and ONE feature (which will be used
+##'   to construct the binary response), columns val, time
 ##' @param n_ahead number of days ahead that response will be computed
-##' @param fn_response logic for computing response, based on a provided response vector whose all points will be used for this computation
-##' @return inputted dataframe with addedmresp colum, which is a binary variable indicating if there is a hotspot n days ahead of the date variable
-response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg, threshold, ...){
+##' @param fn_response logic for computing response, based on a provided
+##'   response vector whose all points will be used for this computation
+##' @param onset if TRUE, then hotspot is defined as the onset of
+##'   increases. Otherwise, a hotspot is defined as an increasing trend,
+##'   regardless of the past.
+##' @return inputted dataframe with addedmresp colum, which is a binary variable
+##'   indicating if there is a hotspot n days ahead of the date variable
+response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg, threshold, onset = FALSE,...){
   signal <- df$value
   timestamp <- df$time_value
   
@@ -114,19 +119,20 @@ response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg, thresh
     out$resp[i] <- fn_response(signal[1:(i+n_ahead)], i, threshold, ...)
   }
 
-  ## ## Justin's temporary addition:
-  ## ## Go back (up to 60 days), and if x% of 60 previous days were a hot spot,
-  ## ## don't return. Use default of x=70
-  ## out$resp_new = out$resp
-  ## for(ii in 1:(len-n_ahead+1)){
-  ##   ii = len-n_ahead+1
-  ##   start = pmax(ii - 59, 1)
-  ##   hot_past = see_past_hotness(out$resp[start:ii])
-  ##   out$resp_new[i] <- (out$resp[ii] & !hot_past)
-  ## }
-  ## out$resp = out$resp_new
-  ## print(out$resp)
-  ## ## If you're coding and you need a break, see this: https://xkcd.com/2346/
+  if(onset){
+    ## Go back (up to 60 days), and if x% of 14 previous days were a hot spot,
+    ## don't deem as hotspot. Use default of x=70%
+    out$resp_new = out$resp
+    track_past = 14
+    for(ii in 1:(len - n_ahead + 1)){
+      start = pmax(ii - track_past + 1, 1)
+      hot_past = see_past_hotness(out$resp[start:ii])
+      out$resp_new[ii] <- (out$resp[ii] & !hot_past)
+    }
+    ## if(df$geo=="fl") browser()
+    out$resp = out$resp_new
+    ## If you're coding and you need a break, see this: https://xkcd.com/2346/
+  }
 
   return(out)
 }
@@ -242,31 +248,46 @@ add_geoinfo <- function(df_all, geo_type){
 }
 
 
-##' outputs data ready for modeling, with all lagged features and binary response
-##'    uses output from API call
+##' outputs data ready for modeling, with all lagged features and binary
+##'    response uses output from API call
 ##' 
-##' @param mat resulted from the API call with all signals we want to use for model construction
-##' @param lags number of past values to include in the data frame; for time t, dataframe will have in one row X_t until X_{t-lag}
+##' @param mat resulted from the API call with all signals we want to use for
+##'   model construction
+##' @param lags number of past values to include in the data frame; for time t,
+##'   dataframe will have in one row X_t until X_{t-lag}
 ##' @param n_ahead number of days ahead that response will be computed
 ##' @param response name of the response variable in mat
-##' @param fn_response logic for computing response, based on a provided response vector whose all points will be used for this computation
+##' @param fn_response logic for computing response, based on a provided
+##'   response vector whose all points will be used for this computation
 ##' @param threshold threshold on increase val to determine hotspot
 ##' @param slopes if TRUE, produces a dataframe with slopes based on the past feature values and if FALSE, produces raw lagged features
+##' @param onset if TRUE, then hotspot is defined as the onset of
+##'   increases. Otherwise, a hotspot is defined as an increasing trend,
+##'   regardless of the past.
+
 ##' @return dataset ready to be fed to fitting functions
-ready_to_model <- function(mat, lags, n_ahead, response = "confirmed_7dav_incidence_num", slope = FALSE, fn_response = response_diff_avg_1week, threshold = .25){
+ready_to_model <- function(mat, lags, n_ahead,
+                           response = "confirmed_7dav_incidence_num",
+                           slope = FALSE, fn_response = response_diff_avg_1week,
+                           threshold = .25,
+                           onset = FALSE){
+
   ## construct lagged features for all available signals, including lagged responses
   # TODO deal with potential NAs?
-  features <- mat %>% plyr::ddply(c("signal", "data_source", "geo_value"), lagged_features_onegeo, lags = lags, slope = slope) %>% na.omit()
+  features <- mat %>% plyr::ddply(c("signal", "data_source", "geo_value"),
+                                  lagged_features_onegeo, lags = lags, slope = slope) %>% na.omit()
   ## construct hotspot indicator in the resp variable
   responses <- mat %>% filter(signal == response) %>% plyr::ddply(c("signal", "data_source", "geo_value"), response_onegeo,
-                                                                  n_ahead = n_ahead, fn_response = fn_response, threshold = threshold) %>% na.omit()
+                                                                  n_ahead = n_ahead, fn_response = fn_response, threshold = threshold,
+                                                                  onset = onset) %>% na.omit()
+
   ## transform the dataframe in a wide format, with one row per geo_value and date
   names_to_pivot <- colnames(features %>% select(-geo_value, -time_value, -signal, -data_source))
   features <- pivot_wider(features, id_cols = c("geo_value", "time_value"), names_from = c("signal", "data_source"), 
                           values_from = all_of(names_to_pivot)) %>% ungroup
+
   ## join features and response
   mat_to_model <- inner_join(features, responses %>% select(-signal, -data_source), by = c("geo_value", "time_value")) %>% na.omit()
-  
   return(mat_to_model)
 }
 
@@ -283,6 +304,57 @@ sample_split_date <- function(df_tomodel, pct_test=0.3){
   df_train <- df_tomodel %>% filter(time_value < start_test_date$time_value[1])
   return(list(df_test = df_test, df_train = df_train))
 }
+
+
+## Sample splitting by geo levels.
+sample_split_geo <- function(df_model, pct_test = 0.3){
+
+  ## df_tomodel <- df_tomodel %>% arrange(desc(time_value)) %>% na.omit()
+  ## start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"geo_value"]
+  ## start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"geo_value"]
+  geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
+  set.seed(0)
+  test_ind =  sample(length(geos), length(geos) * pct_test)
+  test_geos = geos[test_ind]
+  train_geos = geos[-test_ind]
+  df_test <- df_model %>% filter(geo_value %in% test_geos)
+  df_train <- df_model %>% filter(geo_value %in% train_geos)
+
+  ## Todo: check if train and test have equal number of hot spots. Doesn't seem
+  ## to be a big problem since we are naively splitting geos, but still..
+
+  ## ## Helper to calculate rise from June to July
+  ## howmuchrise <- function(val, time){
+  ##  mean(val[time >= "2020-7-26"]) - mean(val[time <= "2020-6-06"])
+  ## }
+
+  ## ## Sort all the rises
+  ## rises = mat %>%
+  ##   group_by(geo_value) %>%
+  ##   dplyr::summarise(rise = howmuchrise(value, time_value)) %>%
+  ##   arrange(desc(rise))
+
+  ## ## ## See the numerical summary
+  ## ## rises %>% dplyr::select(rise) %>% unlist() %>% summary()
+
+  ## ## See the numerical summary
+  ## topn = 40
+  ## geos = rises %>%  slice_head(n = topn) %>% dplyr::select(geo_value) %>% unlist()
+  ## set.seed(0)
+  ## train_i = sample(topn, topn/5)
+  ## train_hotspot_geos = geos[train_i]
+  ## test_hotspot_geos = geos[-train_i]
+
+  ## ## mat %>% select(contains("geo")) %>% unlist() %>% unique() %>% length()
+  ## df_no_hotspot <- df_model %>% filter(!(geo_value %in% geos))
+  ## df_yes_hotspot <- df_model %>% filter(geo_value %in% geos)
+
+  # Make training set and test set separately
+  return(list(df_test = df_test, df_train = df_train))
+}
+
+
+
 
 #' Make |foldid| argument for covariate matrix |x| and |nfold|-fold
 #' cross-validation; makes nfold consecutive time blocks
@@ -717,4 +789,51 @@ plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_exis
       geom_text(data = df_auc, mapping = aes(x = rep(.65,nrow(df_auc)), y = seq(.2, .2-0.05*(nrow(df_auc)-1), -0.05), color = model, label = auc), size = 5, show.legend = FALSE) +
       annotate(geom="text", x=.65, y=.25, label="FbAUC")
   }
+}
+
+
+##' Fit various models to train data, and make plots for test data.
+##'
+##' @param destin Where to save plots.
+##' @param splitted a list containing train and test data.
+##'
+##' @return
+make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope, split_type, onset){
+
+  ######################################
+  ## Model with lagged responses only ##
+  ######################################
+  predictions_onlylaggedresponse <- fit_predict_models(splitted$df_train %>% select(geo_value, time_value, resp, contains(response)),
+                                                       splitted$df_test %>% select(geo_value, time_value, resp, contains(response)),
+                                                       lags = lags, n_ahead = n_ahead)
+  a = plot_adapted_roc(predictions_onlylaggedresponse, geo_type = geo_type)
+  a
+
+  ####################################################
+  ## Model with lagged responses + facebook signals ##
+  ####################################################
+  predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test, lags = lags, n_ahead = n_ahead)
+  b = plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type)
+  b
+
+  # ggsave(plot = b, filename = paste("figures/", toupper(geo_type), "precrecall_lag", lags,"_nahead", n_ahead, ".png", sep = ""), width = 12, height = 8, dpi = 200)
+  ggsave(plot = b,
+         filename = file.path(destin, paste(fn_response_name,"/", geo_type,
+                                            "_resp", threshold*100, "_lag", lags,"_nahead",
+                                            n_ahead, "_slope", slope, "_split_type_", split_type,
+                                            "_onset_", onset, ".png", sep = "")),
+         width = 12, height = 8, dpi = 200)
+
+  ## Also plot regular ROC urves
+  a = plot_roc(predictions_onlylaggedresponse, geo_type = geo_type, popweighted = FALSE)
+  a
+  b = plot_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type, popweighted = FALSE)
+  b
+    ggsave(plot = b,
+           filename = file.path(paste(destin, fn_response_name,"/", geo_type,
+                                      "_resp", threshold*100, "_lag", lags,
+                                      "_nahead", n_ahead, "_slope", slope,
+                                      "ROC", "_split_type_", split_type,
+                                      "_onset_", onset, ".png", sep = "")),
+           width = 12, height = 8, dpi = 200)
 }

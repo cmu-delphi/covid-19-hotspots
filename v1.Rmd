@@ -32,33 +32,33 @@ SVM, xgboost), for a hotspot detection model.
 
 ## Data and model 
 
-1. **Data** Between 2020-05-01 and 2020-08-04, take the 7-day case proportion,
+1. **Data** Between 2020-05-01 and 2020-08-10, take the 7-day case proportion,
    and various FB surveys (smoothed individual, smoothed community survey,
    smoothed household survey, smoothed weighted household survey). Also, add
    features that are "slopes from the past x days", where $x \in
-   \{5,10,15,20..\.$.
+   \{3,5,10,15,20..\}$. Covariates are formed using lagged FB survey values and
+   case proportion.
 
-2. **Response** The response is formed as (1 if 25% increase in the next week, 0
-   otherwise) More about this soon.
+2. **Response data** 
+  - Basic version is: (1 if 25% increase in the next K weeks compared to the
+    past 1 week; 0 otherwise);
+  - Other options: Some minimum threshold for incidence before deeming hotspot;
+    Redefine hotspot as onset -- by stopping the definition of hotspot if it has
+    already occurred many times in the past.
 
-3. **Validation data** are some left-out counties (not times).
+3. **Validation data** are some left-out geo levels (or times). **This hasn't
+   been used yet**
 
-4. **Training and test data** are the rest of the times. Similar proportion of
-   "hot" counties in both item 2 and 3.
+4. **Training and test data** are the rest of the geo levels (or times); these
+    are again split into training (e.g. for cross-validation) and testing data
+    (used only for creating the ROC or adjusted ROC curves).
 
-5. **Response data** (1 if 25% increase in the next K weeks compared to the past
-   1 week; 0 otherwise; Additionally, 0 if your county would have been deemed a
-   hotspot).
+5. **Models** L1- and L2- penalized logistic regression, SVM, xgboost, and more.
 
-6. **Models** L1- and L2- penalized logistic regression, SVM, xgboost, and more.
-
-7. **Cross-validation** is done in a block-wise fashion; consecutive time blocks
+6. **Cross-validation** is done in a block-wise fashion; consecutive time blocks
    are used as test sets.
 
-
-
 ## Code
-
 
 Some variables and functions:
 
@@ -81,8 +81,9 @@ First, we load the data.
 ## Setup
 lags = 28
 geo_type = "county"
+## geo_type = "county"
 response = "confirmed_7dav_incidence_prop"
-fn_response = response_diff_avg_1week
+fn_response = response_diff_avg_1week_min30
 fn_response_name = "response_diff_avg_1week"
 
 ## Read in data once
@@ -98,68 +99,140 @@ signals = c("confirmed_7dav_incidence_prop",
             "smoothed_hh_cmnty_cli")
 start_day = as.Date("2020-05-01")
 end_day = as.Date("2020-08-10")
-validation_days = seq(end_day-30, end_day, by = "days")
+validation_days = seq(end_day-30, end_day, by = "days") ## Old! to be retired soon
+
 signals = data.frame(data_sources = data_sources, signals = signals)
 suppressMessages({
   mat = covidcast_signals(signals,
                           start_day = start_day, end_day = end_day, geo_type = geo_type)
 })
 mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
+
+## New: instead of validation_days, use validation_geos
+geos = mat %>% select(geo_value) %>% unlist() %>% unique()
+set.seed(1000)
+pct_test = 0.3
+validation_ind = sample(length(geos), length(geos) * pct_test)
+validation_geos = geos[validation_ind]
 ```
 
 Now, fit the hot-spot models and visualize the model performances.
 
 ```{r analyze}
-for(n_ahead in c(28,21,14)){
-  for(threshold in c(.25,.40)){
+## Try all configurations
+configs = expand.grid(n_ahead = c(28,21,14),
+                      threshold = c(.25, .40),
+                      split_type = c("time", "geo"),
+                      slope = c(TRUE, FALSE),
+                      onset = c(TRUE, FALSE))
 
-    ## Write some meta information to file (optional)
-    to_file <- paste("\n\n\nTime: ", Sys.time(), "\nSpecifications: ", geo_type, ", lags = ", lags, " n_ahead = ", n_ahead, ", slope = ", slope, ", \nresponse = ", response, ", response function = ", fn_response_name, " , threshold = ", threshold, sep = "")
-    cat(to_file)
-    write(to_file, file = "counts.txt", append = TRUE)
-    
-    ## Make a y|X model matrix ready to model
-    t0 <- Sys.time()
-    df_model <- ready_to_model(mat, lags, n_ahead, response, TRUE, fn_response, threshold)
-    Sys.time()-t0
+mclapply(1:nrow(configs), function(irow){
+
+  ## Configuration
+  configs[irow,] %>% list2env(globalenv())
+  cat(n_ahead, threshold, split_type, slope, onset, fill=TRUE) ## check that it's working
+  })
+
+  ## Make a y|X model matrix ready to model
+  df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold)
+
+  ## Split by time or geo
+  if(split_type == "time"){
     df_traintest <- df_model %>% filter(!(time_value %in% validation_days))
     df_validation <- df_model %>% filter(time_value %in% validation_days)
-    splitted <- sample_split_date(df_traintest, pct_test=0.3)
-    
+    splitted <- sample_split_date(df_traintest, pct_test = 0.3)
+  } else {
+    df_traintest <- df_model %>% filter(!(geo_value %in% validation_geos))
+    df_validation <- df_model %>% filter(geo_value %in% validation_geos)
+    splitted <- sample_split_geo(df_traintest, pct_test = 0.3)
 
-    ## Write some meta information to file (optional)
-    to_file <- paste("\n\tTraining set: ",nrow(splitted$df_train), " observations. 1's:", sum(splitted$df_train$resp), ", 0's:", sum(1-splitted$df_train$resp), "\n\tTest set: ",nrow(splitted$df_test), " observations. 1's:", sum(splitted$df_test$resp), ", 0's:", sum(1-splitted$df_test$resp),  sep = "")
-    cat(to_file)
-    write(to_file, file = "counts.txt", append = TRUE)
-    
-    
-    ######################################
-    ## Model with lagged responses only ##
-    ###################################### 
-    predictions_onlylaggedresponse <- fit_predict_models(splitted$df_train %>% select(geo_value, time_value, resp, contains(response)), 
-                                                         splitted$df_test %>% select(geo_value, time_value, resp, contains(response)),
-                                                         lags = lags, n_ahead = n_ahead)
-    a = plot_adapted_roc(predictions_onlylaggedresponse, geo_type = geo_type)
-    a
-    
-    ####################################################
-    ## Model with lagged responses + facebook signals ##
-    ####################################################
-    predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test, lags = lags, n_ahead = n_ahead)
-    b = plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type)
-    b
-
-    # ggsave(plot = b, filename = paste("figures/", toupper(geo_type), "precrecall_lag", lags,"_nahead", n_ahead, ".png", sep = ""), width = 12, height = 8, dpi = 200)
-    ggsave(plot = b, filename = paste("figures/", fn_response_name,"/", geo_type, "_resp", threshold*100, "_lag", lags,"_nahead", n_ahead, "_slope", slope, ".png", sep = ""), width = 12, height = 8, dpi = 200) 
-
-    ## Also plot regular ROC urves
-    a = plot_roc(predictions_onlylaggedresponse, geo_type = geo_type, popweighted = FALSE)
-    a
-    b = plot_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type, popweighted = FALSE)
-    b
-    ggsave(plot = b, filename = paste("figures/", fn_response_name,"/", geo_type, "_resp", threshold*100, "_lag", lags,"_nahead", n_ahead, "_slope", slope, "ROC.png", sep = ""), width = 12, height = 8, dpi = 200) 
-    
+    ## Temporary check: show how many
+    df_model %>% select(resp) %>% table()
+    df_traintest %>% select(resp) %>% table()
+    df_validation %>% select(resp) %>% table()
   }
-}
+  make_plots(destin = "figures", splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope,
+             split_type, onset)
+}, mc.cores = 12)
 
+```
+
+## Visualizing the response
+
+We can also visualize the response, varying a few things: `fn_response`,
+`onset`, `threshold`, `n_ahead` etc.
+
+(FYI lots of duplicate code here)
+
+```{r}
+###########
+## Setup ##
+###########
+lags = 28
+geo_type = "state"
+## geo_type = "county"
+response = "confirmed_7dav_incidence_prop"
+fn_response = response_diff_avg_1week_min30 
+## fn_response = response_diff_avg_1week 
+slope = TRUE
+## slope = FALSE
+onset = FALSE
+fn_response_name = "response_diff_avg_1week"
+n_ahead = 28
+threshold = .25
+
+## Read in data once
+data_sources = c("indicator-combination", 
+                 "fb-survey", 
+                 "fb-survey", 
+                 "fb-survey", 
+                 "fb-survey")
+signals = c("confirmed_7dav_incidence_prop", 
+            "smoothed_cli", 
+            "smoothed_nohh_cmnty_cli", 
+            "smoothed_wcli", 
+            "smoothed_hh_cmnty_cli")
+start_day = as.Date("2020-05-01")
+end_day = as.Date("2020-08-10")
+validation_days = seq(end_day-30, end_day, by = "days") ## Old! to be retired soon
+
+signals = data.frame(data_sources = data_sources, signals = signals)
+suppressMessages({
+  mat = covidcast_signals(signals,
+                          start_day = start_day, end_day = end_day, geo_type = geo_type)
+})
+mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
+
+df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, TRUE)
+df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, FALSE)
+df_validation <- df_model %>% filter(time_value %in% validation_days)
+df_validation %>% select(resp) %>% unlist() %>% table()
+df_model %>% select(resp) %>% unlist() %>% table()
+splitted <- sample_split_date(df_traintest, pct_test = 0.3)
+
+## Visualize
+geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
+nn1 = 7
+nn2 = 8
+par(mfrow = c(nn1, nn2)); par(mar = c(3, 3, 1, 1)); par(cex=.7)
+iilist = 1:length(geos)
+for(ii in iilist){
+
+  ## Form our response data (0's and 1's)
+  dat0 = df_model %>% subset(geo_value==geos[ii]) %>%
+  select(time_value,
+         resp, 
+         incidence = "feature_lag0_confirmed_7dav_incidence_prop_indicator-combination" ) 
+
+  ## Combine it with original data for this geo
+  dat = mat%>% as_tibble() %>% filter(geo_value==geos[ii], signal =="confirmed_7dav_incidence_prop") %>%
+    select(time_value, incidence = value) 
+  dat_combined = dat %>% full_join(dat0, by = c("time_value", "incidence"))
+  dat_combined = dat_combined %>% mutate(resp=replace(resp, is.na(resp), 0))
+
+  ## Make a plot
+  dat_combined %>% with(plot(time_value, incidence, col = resp+1, type='o', pch=16, ylim= c(0,100)))
+  abline(h = 30, col='grey50', lwd=3)
+  legend("topleft", legend=geos[ii], bty='n', cex=3)
+}
 ```

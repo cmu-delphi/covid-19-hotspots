@@ -279,11 +279,16 @@ div.tocify {
 <div id="data-and-model" class="section level2">
 <h2>Data and model</h2>
 <ol style="list-style-type: decimal">
-<li><p><strong>Data</strong> Between 2020-05-01 and 2020-08-04, take the 7-day case proportion, and various FB surveys (smoothed individual, smoothed community survey, smoothed household survey, smoothed weighted household survey). Also, add features that are &quot;slopes from the past x days&quot;, where <span class="math inline">\(x \in  \{5,10,15,20..\.\)</span>.</p></li>
-<li><p><strong>Response</strong> The response is formed as (1 if 25% increase in the next week, 0 otherwise) More about this soon.</p></li>
-<li><p><strong>Validation data</strong> are some left-out counties (not times).</p></li>
-<li><p><strong>Training and test data</strong> are the rest of the times. Similar proportion of &quot;hot&quot; counties in both item 2 and 3.</p></li>
-<li><p><strong>Response data</strong> (1 if 25% increase in the next K weeks compared to the past 1 week; 0 otherwise; Additionally, 0 if your county would have been deemed a hotspot).</p></li>
+<li><p><strong>Data</strong> Between 2020-05-01 and 2020-08-10, take the 7-day case proportion, and various FB surveys (smoothed individual, smoothed community survey, smoothed household survey, smoothed weighted household survey). Also, add features that are &quot;slopes from the past x days&quot;, where <span class="math inline">\(x \in  \{3,5,10,15,20..\}\)</span>. Covariates are formed using lagged FB survey values and case proportion.</p></li>
+<li><strong>Response data</strong></li>
+</ol>
+<ul>
+<li>Basic version is: (1 if 25% increase in the next K weeks compared to the past 1 week; 0 otherwise);</li>
+<li>Other options: Some minimum threshold for incidence before deeming hotspot; Redefine hotspot as onset -- by stopping the definition of hotspot if it has already occurred many times in the past.</li>
+</ul>
+<ol start="3" style="list-style-type: decimal">
+<li><p><strong>Validation data</strong> are some left-out geo levels (or times). <strong>This hasn't been used yet</strong></p></li>
+<li><p><strong>Training and test data</strong> are the rest of the geo levels (or times); these are again split into training (e.g. for cross-validation) and testing data (used only for creating the ROC or adjusted ROC curves).</p></li>
 <li><p><strong>Models</strong> L1- and L2- penalized logistic regression, SVM, xgboost, and more.</p></li>
 <li><p><strong>Cross-validation</strong> is done in a block-wise fashion; consecutive time blocks are used as test sets.</p></li>
 </ol>
@@ -303,8 +308,9 @@ div.tocify {
 <pre class="r"><code>## Setup
 lags = 28
 geo_type = &quot;county&quot;
+## geo_type = &quot;county&quot;
 response = &quot;confirmed_7dav_incidence_prop&quot;
-fn_response = response_diff_avg_1week
+fn_response = response_diff_avg_1week_min30
 fn_response_name = &quot;response_diff_avg_1week&quot;
 
 ## Read in data once
@@ -320,64 +326,130 @@ signals = c(&quot;confirmed_7dav_incidence_prop&quot;,
             &quot;smoothed_hh_cmnty_cli&quot;)
 start_day = as.Date(&quot;2020-05-01&quot;)
 end_day = as.Date(&quot;2020-08-10&quot;)
-validation_days = seq(end_day-30, end_day, by = &quot;days&quot;)
+validation_days = seq(end_day-30, end_day, by = &quot;days&quot;) ## Old! to be retired soon
+
 signals = data.frame(data_sources = data_sources, signals = signals)
 suppressMessages({
   mat = covidcast_signals(signals,
                           start_day = start_day, end_day = end_day, geo_type = geo_type)
 })
-mat &lt;- mat %&gt;% select(geo_value, time_value, signal, data_source, value) </code></pre>
-<p>Now, fit the hot-spot models and visualize the model performances.</p>
-<pre class="r"><code>for(n_ahead in c(28,21,14)){
-  for(threshold in c(.25,.40)){
+mat &lt;- mat %&gt;% select(geo_value, time_value, signal, data_source, value) 
 
-    ## Write some meta information to file (optional)
-    to_file &lt;- paste(&quot;\n\n\nTime: &quot;, Sys.time(), &quot;\nSpecifications: &quot;, geo_type, &quot;, lags = &quot;, lags, &quot; n_ahead = &quot;, n_ahead, &quot;, slope = &quot;, slope, &quot;, \nresponse = &quot;, response, &quot;, response function = &quot;, fn_response_name, &quot; , threshold = &quot;, threshold, sep = &quot;&quot;)
-    cat(to_file)
-    write(to_file, file = &quot;counts.txt&quot;, append = TRUE)
-    
-    ## Make a y|X model matrix ready to model
-    t0 &lt;- Sys.time()
-    df_model &lt;- ready_to_model(mat, lags, n_ahead, response, TRUE, fn_response, threshold)
-    Sys.time()-t0
+## New: instead of validation_days, use validation_geos
+geos = mat %&gt;% select(geo_value) %&gt;% unlist() %&gt;% unique()
+set.seed(1000)
+pct_test = 0.3
+validation_ind = sample(length(geos), length(geos) * pct_test)
+validation_geos = geos[validation_ind]</code></pre>
+<p>Now, fit the hot-spot models and visualize the model performances.</p>
+<pre class="r"><code>## Try all configurations
+configs = expand.grid(n_ahead = c(28,21,14),
+                      threshold = c(.25, .40),
+                      split_type = c(&quot;time&quot;, &quot;geo&quot;),
+                      slope = c(TRUE, FALSE),
+                      onset = c(TRUE, FALSE))
+
+mclapply(1:nrow(configs), function(irow){
+
+  ## Configuration
+  configs[irow,] %&gt;% list2env(globalenv())
+  cat(n_ahead, threshold, split_type, slope, onset, fill=TRUE) ## check that it's working
+  })
+
+  ## Make a y|X model matrix ready to model
+  df_model &lt;- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold)
+
+  ## Split by time or geo
+  if(split_type == &quot;time&quot;){
     df_traintest &lt;- df_model %&gt;% filter(!(time_value %in% validation_days))
     df_validation &lt;- df_model %&gt;% filter(time_value %in% validation_days)
-    splitted &lt;- sample_split_date(df_traintest, pct_test=0.3)
-    
+    splitted &lt;- sample_split_date(df_traintest, pct_test = 0.3)
+  } else {
+    df_traintest &lt;- df_model %&gt;% filter(!(geo_value %in% validation_geos))
+    df_validation &lt;- df_model %&gt;% filter(geo_value %in% validation_geos)
+    splitted &lt;- sample_split_geo(df_traintest, pct_test = 0.3)
 
-    ## Write some meta information to file (optional)
-    to_file &lt;- paste(&quot;\n\tTraining set: &quot;,nrow(splitted$df_train), &quot; observations. 1's:&quot;, sum(splitted$df_train$resp), &quot;, 0's:&quot;, sum(1-splitted$df_train$resp), &quot;\n\tTest set: &quot;,nrow(splitted$df_test), &quot; observations. 1's:&quot;, sum(splitted$df_test$resp), &quot;, 0's:&quot;, sum(1-splitted$df_test$resp),  sep = &quot;&quot;)
-    cat(to_file)
-    write(to_file, file = &quot;counts.txt&quot;, append = TRUE)
-    
-    
-    ######################################
-    ## Model with lagged responses only ##
-    ###################################### 
-    predictions_onlylaggedresponse &lt;- fit_predict_models(splitted$df_train %&gt;% select(geo_value, time_value, resp, contains(response)), 
-                                                         splitted$df_test %&gt;% select(geo_value, time_value, resp, contains(response)),
-                                                         lags = lags, n_ahead = n_ahead)
-    a = plot_adapted_roc(predictions_onlylaggedresponse, geo_type = geo_type)
-    a
-    
-    ####################################################
-    ## Model with lagged responses + facebook signals ##
-    ####################################################
-    predictions_laggedandfacebook &lt;- fit_predict_models(splitted$df_train, splitted$df_test, lags = lags, n_ahead = n_ahead)
-    b = plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type)
-    b
-
-    # ggsave(plot = b, filename = paste(&quot;figures/&quot;, toupper(geo_type), &quot;precrecall_lag&quot;, lags,&quot;_nahead&quot;, n_ahead, &quot;.png&quot;, sep = &quot;&quot;), width = 12, height = 8, dpi = 200)
-    ggsave(plot = b, filename = paste(&quot;figures/&quot;, fn_response_name,&quot;/&quot;, geo_type, &quot;_resp&quot;, threshold*100, &quot;_lag&quot;, lags,&quot;_nahead&quot;, n_ahead, &quot;_slope&quot;, slope, &quot;.png&quot;, sep = &quot;&quot;), width = 12, height = 8, dpi = 200) 
-
-    ## Also plot regular ROC urves
-    a = plot_roc(predictions_onlylaggedresponse, geo_type = geo_type, popweighted = FALSE)
-    a
-    b = plot_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type, popweighted = FALSE)
-    b
-    ggsave(plot = b, filename = paste(&quot;figures/&quot;, fn_response_name,&quot;/&quot;, geo_type, &quot;_resp&quot;, threshold*100, &quot;_lag&quot;, lags,&quot;_nahead&quot;, n_ahead, &quot;_slope&quot;, slope, &quot;ROC.png&quot;, sep = &quot;&quot;), width = 12, height = 8, dpi = 200) 
-    
+    ## Temporary check: show how many
+    df_model %&gt;% select(resp) %&gt;% table()
+    df_traintest %&gt;% select(resp) %&gt;% table()
+    df_validation %&gt;% select(resp) %&gt;% table()
   }
+  make_plots(destin = &quot;figures&quot;, splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope,
+             split_type, onset)
+}, mc.cores = 12)</code></pre>
+</div>
+<div id="visualizing-the-resopnse" class="section level2">
+<h2>Visualizing the resopnse</h2>
+<p>We can also visualize the response, varying a few things: <code>fn_response</code>, <code>onset</code>, <code>threshold</code>, <code>n_ahead</code> etc.</p>
+<p>(FYI lots of duplicate code here)</p>
+<pre class="r"><code>###########
+## Setup ##
+###########
+lags = 28
+geo_type = &quot;state&quot;
+## geo_type = &quot;county&quot;
+response = &quot;confirmed_7dav_incidence_prop&quot;
+fn_response = response_diff_avg_1week_min30 
+## fn_response = response_diff_avg_1week 
+slope = TRUE
+## slope = FALSE
+onset = FALSE
+fn_response_name = &quot;response_diff_avg_1week&quot;
+n_ahead = 28
+threshold = .25
+
+## Read in data once
+data_sources = c(&quot;indicator-combination&quot;, 
+                 &quot;fb-survey&quot;, 
+                 &quot;fb-survey&quot;, 
+                 &quot;fb-survey&quot;, 
+                 &quot;fb-survey&quot;)
+signals = c(&quot;confirmed_7dav_incidence_prop&quot;, 
+            &quot;smoothed_cli&quot;, 
+            &quot;smoothed_nohh_cmnty_cli&quot;, 
+            &quot;smoothed_wcli&quot;, 
+            &quot;smoothed_hh_cmnty_cli&quot;)
+start_day = as.Date(&quot;2020-05-01&quot;)
+end_day = as.Date(&quot;2020-08-10&quot;)
+validation_days = seq(end_day-30, end_day, by = &quot;days&quot;) ## Old! to be retired soon
+
+signals = data.frame(data_sources = data_sources, signals = signals)
+suppressMessages({
+  mat = covidcast_signals(signals,
+                          start_day = start_day, end_day = end_day, geo_type = geo_type)
+})
+mat &lt;- mat %&gt;% select(geo_value, time_value, signal, data_source, value) 
+
+df_model &lt;- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
+df_validation &lt;- df_model %&gt;% filter(time_value %in% validation_days)
+df_validation %&gt;% select(resp) %&gt;% unlist() %&gt;% table()
+df_model %&gt;% select(resp) %&gt;% unlist() %&gt;% table()
+splitted &lt;- sample_split_date(df_traintest, pct_test = 0.3)
+
+## Visualize
+geos = df_model %&gt;% select(geo_value) %&gt;% unlist() %&gt;% unique()
+nn1 = 7
+nn2 = 8
+par(mfrow = c(nn1, nn2)); par(mar = c(3, 3, 1, 1)); par(cex=.7)
+iilist = 1:length(geos)
+for(ii in iilist){
+
+  ## Form our response data (0's and 1's)
+  dat0 = df_model %&gt;% subset(geo_value==geos[ii]) %&gt;%
+  select(time_value,
+         resp, 
+         incidence = &quot;feature_lag0_confirmed_7dav_incidence_prop_indicator-combination&quot; ) 
+
+  ## Combine it with original data for this geo
+  dat = mat%&gt;% as_tibble() %&gt;% filter(geo_value==geos[ii], signal ==&quot;confirmed_7dav_incidence_prop&quot;) %&gt;%
+    select(time_value, incidence = value) 
+  dat_combined = dat %&gt;% full_join(dat0, by = c(&quot;time_value&quot;, &quot;incidence&quot;))
+  dat_combined = dat_combined %&gt;% mutate(resp=replace(resp, is.na(resp), 0))
+
+  ## Make a plot
+  dat_combined %&gt;% with(plot(time_value, incidence, col = resp+1, type='o', pch=16, ylim= c(0,100)))
+  abline(h = 30, col='grey50', lwd=3)
+  legend(&quot;topleft&quot;, legend=geos[ii], bty='n', cex=3)
 }</code></pre>
 </div>
 
