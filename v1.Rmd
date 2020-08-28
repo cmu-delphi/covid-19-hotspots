@@ -134,7 +134,7 @@ mclapply(1:nrow(configs), function(irow){
   })
 
   ## Make a y|X model matrix ready to model
-  df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold)
+  df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
 
   ## Split by time or geo
   if(split_type == "time"){
@@ -202,15 +202,16 @@ suppressMessages({
                           start_day = start_day, end_day = end_day, geo_type = geo_type)
 })
 mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
-
-df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, TRUE)
-df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, FALSE)
+df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
 df_validation <- df_model %>% filter(time_value %in% validation_days)
-df_validation %>% select(resp) %>% unlist() %>% table()
-df_model %>% select(resp) %>% unlist() %>% table()
 splitted <- sample_split_date(df_traintest, pct_test = 0.3)
 
-## Visualize
+
+## Seeing the proportion of 0's and 1's in the response.
+df_validation %>% select(resp) %>% unlist() %>% table() %>% print()
+df_model %>% select(resp) %>% unlist() %>% table()
+
+## Visualize the response with the data.
 geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
 nn1 = 7
 nn2 = 8
