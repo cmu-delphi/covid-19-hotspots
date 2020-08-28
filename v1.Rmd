@@ -80,7 +80,7 @@ First, we load the data.
 ```{r read-data}
 ## Setup
 lags = 28
-geo_type = "county"
+geo_type = "state" ## county, MSA
 ## geo_type = "county"
 response = "confirmed_7dav_incidence_prop"
 fn_response = response_diff_avg_1week_min30
@@ -119,19 +119,29 @@ validation_geos = geos[validation_ind]
 Now, fit the hot-spot models and visualize the model performances.
 
 ```{r analyze}
-## Try all configurations
-configs = expand.grid(n_ahead = c(28,21,14),
-                      threshold = c(.25, .40),
-                      split_type = c("time", "geo"),
-                      slope = c(TRUE, FALSE),
-                      onset = c(TRUE, FALSE))
+## ## Try all configurations
+## configs = expand.grid(n_ahead = c(28,21,14),
+##                       threshold = c(.25, .40),
+##                       split_type = c("time", "geo"),
+##                       slope = c(TRUE, FALSE))
+##                       ## onset = c(TRUE, FALSE))
 
-mclapply(1:nrow(configs), function(irow){
+## mclapply(1:nrow(configs), function(irow){
 
-  ## Configuration
-  configs[irow,] %>% list2env(globalenv())
-  cat(n_ahead, threshold, split_type, slope, onset, fill=TRUE) ## check that it's working
-  })
+##   ## Default configuration
+##   onset = FALSE
+
+##   ## Load configuration
+##   configs[irow,] %>% list2env(globalenv())
+##   cat(n_ahead, threshold, split_type, slope, onset, fill=TRUE) ## check that it's working
+##   })
+
+
+  ## Picking one setting: feel free to change
+  slope = onset = FALSE 
+  n_ahead = 28
+  threshold = .25
+  split_type = "time"
 
   ## Make a y|X model matrix ready to model
   df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
@@ -146,14 +156,14 @@ mclapply(1:nrow(configs), function(irow){
     df_validation <- df_model %>% filter(geo_value %in% validation_geos)
     splitted <- sample_split_geo(df_traintest, pct_test = 0.3)
 
-    ## Temporary check: show how many
+    ## Temporary check: show how many ones
     df_model %>% select(resp) %>% table()
     df_traintest %>% select(resp) %>% table()
     df_validation %>% select(resp) %>% table()
   }
   make_plots(destin = "figures", splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope,
              split_type, onset)
-}, mc.cores = 12)
+## }, mc.cores = 12)
 
 ```
 
