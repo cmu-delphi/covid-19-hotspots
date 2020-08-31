@@ -852,11 +852,14 @@ make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type, fn
   b
 
   # ggsave(plot = b, filename = paste("figures/", toupper(geo_type), "precrecall_lag", lags,"_nahead", n_ahead, ".png", sep = ""), width = 12, height = 8, dpi = 200)
+  plotname_adj_roc = paste0(geo_type, "_resp", threshold*100, "_lag", lags,"_nahead",
+                            n_ahead, "_slope", slope, "_split_type_", split_type,
+                            "_onset_", onset, ".png")
+  plotname_roc = paste0(geo_type, "_resp", threshold*100, "_lag", lags,"_nahead",
+                            n_ahead, "_slope", slope, "ROC", "_split_type_", split_type,
+                            "_onset_", onset, ".png")
   ggsave(plot = b,
-         filename = file.path(destin, paste(fn_response_name,"/", geo_type,
-                                            "_resp", threshold*100, "_lag", lags,"_nahead",
-                                            n_ahead, "_slope", slope, "_split_type_", split_type,
-                                            "_onset_", onset, ".png", sep = "")),
+         filename = file.path(destin, fn_response_name, plotname_adj_roc),
          width = 12, height = 8, dpi = 200)
 
   ## Also plot regular ROC urves
@@ -865,10 +868,6 @@ make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type, fn
   b = plot_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type, popweighted = FALSE)
   b
     ggsave(plot = b,
-           filename = file.path(paste(destin, fn_response_name,"/", geo_type,
-                                      "_resp", threshold*100, "_lag", lags,
-                                      "_nahead", n_ahead, "_slope", slope,
-                                      "ROC", "_split_type_", split_type,
-                                      "_onset_", onset, ".png", sep = "")),
+           filename = file.path(destin, fn_response_name,  plotname_roc),
            width = 12, height = 8, dpi = 200)
 }
