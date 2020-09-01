@@ -786,6 +786,9 @@ roc_onemodel <- function(df_one, popweighted = FALSE){
 }
 
 
+
+
+
 ##' computes metrics for all models and produces roc curves (our adapted roc with different metrics)
 ##'
 ##' @param predictions dataframe with cols: geo_value, time_value, resp,
@@ -796,10 +799,12 @@ roc_onemodel <- function(df_one, popweighted = FALSE){
 ##' @param popweighted indicates if metrics for ROC curve should be population weighted
 ##'
 ##' @return ggplot of model comparison curve
-plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_existing = NULL, popweighted = FALSE){
+plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_existing = NULL, popweighted = FALSE, only_return_roc=FALSE){
+
   df_temp <- inner_join(predictions, get_population(geo_type), by = "geo_value")
   df_temp <- reshape2::melt(df_temp, id.vars = c("geo_value", "time_value", "resp", "population"))
   df_auc <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(function(df, ...){data.frame(auc = round(auc(response = df$resp, predictor = df$value)[1], 3))})
+  if(only_return_roc) return(df_auc)
   df_plot <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(~roc_onemodel(.x, popweighted = popweighted))
 
   if(!add){
@@ -853,12 +858,11 @@ make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type, fn
   b
 
   # ggsave(plot = b, filename = paste("figures/", toupper(geo_type), "precrecall_lag", lags,"_nahead", n_ahead, ".png", sep = ""), width = 12, height = 8, dpi = 200)
-  plotname_adj_roc = paste0(geo_type, "_resp", threshold*100, "_lag", lags,"_nahead",
-                            n_ahead, "_slope", slope, "_split_type_", split_type,
-                            "_onset_", onset, ".png")
-  plotname_roc = paste0(geo_type, "_resp", threshold*100, "_lag", lags,"_nahead",
-                            n_ahead, "_slope", slope, "ROC", "_split_type_", split_type,
-                            "_onset_", onset, ".png")
+  plotname_root = paste0(geo_type, "__resp_", threshold*100, "__lag_", lags,"__nahead_",
+                            n_ahead, "__slope_", slope, "__split_type_", split_type,
+                            "__onset_", onset)
+  plotname_adj_roc = paste0(plotname_root, ".png")
+  plotname_roc = paste0(plotname_root, "_ROC", ".png")
   ggsave(plot = b,
          filename = file.path(destin, fn_response_name, plotname_adj_roc),
          width = 12, height = 8, dpi = 200)
@@ -871,4 +875,30 @@ make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type, fn
     ggsave(plot = b,
            filename = file.path(destin, fn_response_name,  plotname_roc),
            width = 12, height = 8, dpi = 200)
+}
+
+
+##' Fit various models to train data, and make plots for test data.
+##'
+##' @param destin Where to save plots.
+##' @param splitted a list containing train and test data.
+##'
+##' @return
+calc_auc <- function(destin = "figures", splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope, split_type, onset){
+
+  ######################################
+  ## Model with lagged responses only ##
+  ######################################
+  predictions_onlylaggedresponse <- fit_predict_models(splitted$df_train %>% select(geo_value, time_value, resp, contains(response)),
+                                                       splitted$df_test %>% select(geo_value, time_value, resp, contains(response)),
+                                                       lags = lags, n_ahead = n_ahead)
+
+  df_auc_no_fb = plot_roc(predictions_onlylaggedresponse, geo_type = geo_type, popweighted = FALSE, only_return_auc = TRUE)
+
+  ####################################################
+  ## Model with lagged responses + facebook signals ##
+  ####################################################
+  predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test, lags = lags, n_ahead = n_ahead)
+  df_auc_yes_fb = plot_roc(predictions_laggedandfacebook, geo_type = geo_type, popweighted = FALSE, only_return_auc = TRUE)
+
 }
