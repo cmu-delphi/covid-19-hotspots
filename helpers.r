@@ -57,18 +57,18 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
 
   out <- data.frame(time_value = timestamp[(lags+1):len])
 
-  if(!slopes){
+  ## if(!slopes){
     ## adding lagged feature from t-0, t-1, t-2, until t-lags
     for(i in 0:lags){
       out <- suppressMessages(bind_cols(out, signal[(lags+1-i):(len-i)]))
     }
     names(out) = c("time_value", paste(name, "_lag", 0:lags, sep = ""))
-  }
+  ## }
   if(slopes){
     npoints = lags+1
     nfeats = floor(npoints/3) ## 3 is a magic number. will construct a new feature (new slope) every 3 points
     limits_lm = round(seq(lags+1, 1, length.out = nfeats+1))
-    out[[paste(name, "_lag0", sep = "")]] = signal[(lags+1):(len)]
+    ## out[[paste(name, "_lag0", sep = "")]] = signal[(lags+1):(len)]
     for(j in 1:nfeats){
       aux <- rep(NA, nrow(out))
       row_pos <- 1
@@ -732,6 +732,7 @@ plot_adapted_roc <- function(predictions, geo_type = "county", add = FALSE, df_p
       xlab("population weighted % predicted hotspots") +
       scale_y_continuous(sec.axis = sec_axis(~., name = "population weighted recall (dashed)")) +
       theme(legend.position = "bottom") +
+      scale_x_log10() +
       facet_wrap(~model)
   } else {
     df_plot_existing +
