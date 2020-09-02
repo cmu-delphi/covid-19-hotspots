@@ -799,12 +799,12 @@ roc_onemodel <- function(df_one, popweighted = FALSE){
 ##' @param popweighted indicates if metrics for ROC curve should be population weighted
 ##'
 ##' @return ggplot of model comparison curve
-plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_existing = NULL, popweighted = FALSE, only_return_roc=FALSE){
+plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_existing = NULL, popweighted = FALSE, only_return_auc=FALSE){
 
   df_temp <- inner_join(predictions, get_population(geo_type), by = "geo_value")
   df_temp <- reshape2::melt(df_temp, id.vars = c("geo_value", "time_value", "resp", "population"))
   df_auc <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(function(df, ...){data.frame(auc = round(auc(response = df$resp, predictor = df$value)[1], 3))})
-  if(only_return_roc) return(df_auc)
+  if(only_return_auc) return(df_auc)
   df_plot <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(~roc_onemodel(.x, popweighted = popweighted))
 
   if(!add){
@@ -901,4 +901,10 @@ calc_auc <- function(destin = "figures", splitted, lags, n_ahead, geo_type, fn_r
   predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test, lags = lags, n_ahead = n_ahead)
   df_auc_yes_fb = plot_roc(predictions_laggedandfacebook, geo_type = geo_type, popweighted = FALSE, only_return_auc = TRUE)
 
+  ## column_names = paste0(c("no_fb", "yes_fb"), paste0("_n_ahead", n_ahead))
+  column_names = c("no_fb", "yes_fb")
+  auc_df = df_auc_no_fb %>% bind_cols(df_auc_yes_fb, .id = "model")
+  auc_df = df_auc_no_fb %>% full_join(df_auc_yes_fb, by="model")
+  colnames(auc_df)[2:3] =  column_names
+  return(auc_df)
 }
