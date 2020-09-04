@@ -326,13 +326,17 @@ sample_split_date <- function(df_tomodel, pct_test=0.3){
 
 
 ## Sample splitting by geo levels.
-sample_split_geo <- function(df_model, pct_test = 0.3){
+sample_split_geo <- function(df_model, pct_test = 0.3, seed=0){
 
   ## df_tomodel <- df_tomodel %>% arrange(desc(time_value)) %>% na.omit()
   ## start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"geo_value"]
   ## start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"geo_value"]
   geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
+<<<<<<< HEAD
   set.seed(102)
+=======
+  set.seed(seed)
+>>>>>>> 21d1e4f13e254568c6ffdc68b2dc01331e7fcdd8
   test_ind =  sample(length(geos), length(geos) * pct_test)
   test_geos = geos[test_ind]
   train_geos = geos[-test_ind]
@@ -482,7 +486,6 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1){
   foldid <- make_foldid(df_train, nfold)
 
   ## Main part of the lasso fitting and predicting
-  browser()
   fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
                          y = df_train$resp,
                          family = "binomial",
