@@ -32,59 +32,120 @@ SVM, xgboost), for a hotspot detection model.
 
 ## Data and model 
 
-1. **Data** Between 2020-05-01 and 2020-08-10, take the 7-day case proportion,
-   and various FB surveys (smoothed individual, smoothed community survey,
-   smoothed household survey, smoothed weighted household survey). Also, add
-   features that are "slopes from the past x days", where $x \in
-   \{3,5,10,15,20..\}$. Covariates are formed using lagged FB survey values and
-   case proportion.
+**Geographical levels** Two levels: state and county.
 
-2. **Response data** 
-  - Basic version is: (1 if 25% increase in the next K weeks compared to the
-    past 1 week; 0 otherwise);
-  - Other options: Some minimum threshold for incidence before deeming hotspot;
-    Redefine hotspot as onset -- by stopping the definition of hotspot if it has
-    already occurred many times in the past.
+**Data** Between 2020-05-01 and 2020-08-25, take the 
 
-3. **Validation data** are some left-out geo levels (or times). **This hasn't
-   been used yet**
+- 7-day JHU case proportion (incidence rate),
+- Various FB surveys (smoothed individual, smoothed community survey,
+  smoothed household survey, smoothed weighted household survey).  
+	 
+Then, form a covariate matrix by time-lagging these by 0 through 28
+days. Additionally, add features by calculating "slopes of JHU IR from the past
+x days", where $x \in \{3,5,10,15,20..\}$.
 
-4. **Training and test data** are the rest of the geo levels (or times); these
-    are again split into training (e.g. for cross-validation) and testing data
-    (used only for creating the ROC or adjusted ROC curves).
+The resulting covariate matrix is roughly OOO by OOO at the state level, and OOO
+by OOO at the county level.
 
-5. **Models** L1- and L2- penalized logistic regression, SVM, xgboost, and more.
+**Response data**
 
-6. **Cross-validation** is done in a block-wise fashion; consecutive time blocks
-   are used as test sets.
+- **1** if 25% increase of JHU IR in the one week period 22-28 days from now,
+  compared to the past 1 week (-1 through -7 days) **and** the later 1-week
+  period exceeds $20$.
+- **0** otherwise.
+
+**Training and test data** This is done by splitting the data into training/test
+set at a ratio of 70%/30%, by geographical level. The training set is used for
+training the hotspot model (e.g. for cross-validation of `glmnet()` or training
+`svm()`), and the test data is used only for creating the ROC or adjusted ROC
+curves.
+
+
+**Models** L1- and L2- penalized logistic regression, SVM, xgboost.
+
+**Cross-validation for `glmnet`** is done in a block-wise fashion **in time**;
+five consecutive time blocks are used as test sets (folds).
+
+
+## Results
+
+
+First, visualizing the hotspots for the state level data:
+
+[.figures/]()
+
+The distribution of 0's and 1's in the entire state level data is
+
+[.figures/]()
+
+
+training set:
+
+[.figures/]()
+
+test set
+
+[.figures/]()
+
+The numbers in the county level data are.. (todo: either fill these in or exclude altogether)
+
+
+[.figures/]()
+
+Using `n_ahead=28`, the performances of four different classifiers can be
+visualized as ROC curves. Here, thick transparent lines are the results using
+Facebook data, and thin lines are those excluding Facebook data.
+
+[./figures/]()
+
+We can also see population-weighted ROC curves:
+
+[./figures/]()
+
+Now, choosing a summary statistic to measure the *advantage* in performance
+using Facebook data, we'll calculate *difference* in the area under the curve
+(AUC) between the two versions, for each classifier, as a function of **how far
+ahead hotspots are defined as** i.e. for a range of `n_ahead`, in $\{10, \cdots,
+30\}$:
+
+[./figures/]()
+
+This depends a bit on how the training/test split is made among geographical
+regions. If we use a different random seed for splitting, the ROC curves can
+differ quite a bit:
+
+[./figures/]()
+
+While the classifier performance varies by seed, the advantage that FB grants is
+clearly always present.
 
 ## Code
 
 Some variables and functions:
 
-- `lags` are the number of lagged values taken of the JHU cases and FB.
+- `lags` are the number of lagged values taken of the JHU cases and FB. Current
+  default is `lags=28`.
 - `n_ahead` is the number of days we want to look ahead, in forming the response
-  data (0 or 1) for hotspot detection. 
-- We compare the $\bar y_2$ average of 1(?) week period ending `n_ahead` days
-  from *now*, to the average $\bar y_1$ of the past 1 week period (again, from
-  *now*).
+  data (0 or 1) for hotspot detection. Current default choice is `n_ahead=28`.
+- We compare the $\bar y_2$ average of 1 week period ending `n_ahead` days from
+  *now*, to the average $\bar y_1$ of the past 1 week period (again, from
+  *now*). 
 - We deem one time & region a "hotspot" if $\bar y_1$ is larger than $\bar y_2$
-  by `threshold` percent (say, 25%).
+  by `threshold` percent (25\%).
 - `covidcast_signals()` from the R package `covidcast` allows the data
   collection of multiple sources.
-- `read_to_model()` further cleans + readies the data to feed into functions
-  like `glmnet()`.
+- `read_to_model()` further cleans + readies the data into a $y|X$ type matrix,
+  to feed into functions like `glmnet()`.
 
-First, we load the data.
+First, we download and form the data.
 
-```{r read-data}
+```{r form-data, eval=FALSE}
 ## Setup
 lags = 28
-geo_type = "state" ## county, MSA
-## geo_type = "county"
+geo_type = "state" ## or "county", or "MSA"
 response = "confirmed_7dav_incidence_prop"
-fn_response = response_diff_avg_1week_min30
-fn_response_name = "response_diff_avg_1week"
+fn_response = response_diff_avg_1week_min20
+fn_response_name = "response_diff_avg_1week_min20"
 
 ## Read in data once
 data_sources = c("indicator-combination", 
@@ -108,131 +169,36 @@ suppressMessages({
 })
 mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
 
-## New: instead of validation_days, use validation_geos
-geos = mat %>% select(geo_value) %>% unlist() %>% unique()
-set.seed(1000)
-pct_test = 0.3
-validation_ind = sample(length(geos), length(geos) * pct_test)
-validation_geos = geos[validation_ind]
+## Form the y|X matrix
+df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
+
+## Further split into training and test
+df_traintest <- df_model %>% filter(!(geo_value %in% validation_geos))
+df_validation <- df_model %>% filter(geo_value %in% validation_geos)
+splitted <- sample_split_geo(df_traintest, pct_test = 0.3, seed = geo_split_seed)
+
+## See the distribution of 1's and 0's
+df_model %>% select(resp) %>% table() %>% print()
+df_traintest %>% select(resp) %>% table() %>% print()
+splitted$df_train %>% select(resp) %>% table() %>% print()
+splitted$df_test %>% select(resp) %>% table() %>% print()
+df_validation %>% select(resp) %>% table() %>% print()
+foldid <- make_foldid(splitted$df_train, nfold = 5)
+for(ifold in 1:nfold){
+  splitted$df_train[which(foldid==ifold),] %>% select(resp) %>% table() %>% print()
+}
 ```
 
 Now, fit the hot-spot models and visualize the model performances.
 
-```{r analyze}
-## ## Try all configurations
-## configs = expand.grid(n_ahead = c(28,21,14),
-##                       threshold = c(.25, .40),
-##                       split_type = c("time", "geo"),
-##                       slope = c(TRUE, FALSE))
-##                       ## onset = c(TRUE, FALSE))
-
-## mclapply(1:nrow(configs), function(irow){
-
-##   ## Default configuration
-##   onset = FALSE
-
-##   ## Load configuration
-##   configs[irow,] %>% list2env(globalenv())
-##   cat(n_ahead, threshold, split_type, slope, onset, fill=TRUE) ## check that it's working
-##   })
-
-
-  ## Picking one setting: feel free to change
-  slope = onset = FALSE 
-  n_ahead = 28
-  threshold = .25
-  split_type = "time"
-
-  ## Make a y|X model matrix ready to model
-  df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
-
-  ## Split by time or geo
-  if(split_type == "time"){
-    df_traintest <- df_model %>% filter(!(time_value %in% validation_days))
-    df_validation <- df_model %>% filter(time_value %in% validation_days)
-    splitted <- sample_split_date(df_traintest, pct_test = 0.3)
-  } else {
-    df_traintest <- df_model %>% filter(!(geo_value %in% validation_geos))
-    df_validation <- df_model %>% filter(geo_value %in% validation_geos)
-    splitted <- sample_split_geo(df_traintest, pct_test = 0.3)
-
-    ## Temporary check: show how many ones
-    df_model %>% select(resp) %>% table()
-    df_traintest %>% select(resp) %>% table()
-    df_validation %>% select(resp) %>% table()
-  }
-  make_plots(destin = "figures", splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope,
-             split_type, onset)
-## }, mc.cores = 12)
-
+```{r make-plots, eval=FALSE}
+make_plots(destin = outputdir, splitted, lags, n_ahead, geo_type,
+           fn_response_name, threshold, slope, split_type, onset)
 ```
 
-## Visualizing the response
+Also visualize the 1's and 0's in a plot, in the state level data.
 
-We can also visualize the response, varying a few things: `fn_response`,
-`onset`, `threshold`, `n_ahead` etc.
-
-(FYI lots of duplicate code here)
-
-```{r}
-###########
-## Setup ##
-###########
-lags = 28
-geo_type = "state"
-## geo_type = "county"
-response = "confirmed_7dav_incidence_prop"
-fn_response = response_diff_avg_1week_min20 
-## fn_response = response_diff_avg_1week 
-fn_response_name = "response_diff_avg_1week_min20"
-slope = FALSE
-## slope = FALSE
-onset = FALSE
-n_ahead = 28
-threshold = .25
-
-## Read in data once
-data_sources = c("indicator-combination", 
-                 "fb-survey", 
-                 "fb-survey", 
-                 "fb-survey", 
-                 "fb-survey")
-signals = c("confirmed_7dav_incidence_prop", 
-            "smoothed_cli", 
-            "smoothed_nohh_cmnty_cli", 
-            "smoothed_wcli", 
-            "smoothed_hh_cmnty_cli")
-start_day = as.Date("2020-05-01")
-end_day = as.Date("2020-08-25")
-validation_days = seq(end_day-30, end_day, by = "days") ## Old! to be retired soon
-
-signals = data.frame(data_sources = data_sources, signals = signals)
-suppressMessages({
-  mat = covidcast_signals(signals,
-                          start_day = start_day, end_day = end_day, geo_type = geo_type)
-})
-mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
-df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
-df_validation <- df_model %>% filter(time_value %in% validation_days)
-df_traintest <- df_model %>% filter(!(time_value %in% validation_days))
-splitted <- sample_split_date(df_traintest, pct_test = 0.3)
-
-## New: instead of validation_days, use validation_geos
-geos = mat %>% select(geo_value) %>% unlist() %>% unique()
-set.seed(1000)
-pct_test = 0.3
-validation_ind = sample(length(geos), length(geos) * pct_test)
-validation_geos = geos[validation_ind]
-
-df_validation <- df_model %>% filter(geo_value %in% validation_geos)
-df_traintest <- df_model %>% filter(!(geo_value %in% validation_geos))
-splitted <- sample_split_date(df_traintest, pct_test = 0.3)
-
-## Seeing the proportion of 0's and 1's in the response.
-df_validation %>% select(resp) %>% unlist() %>% table() %>% print()
-df_model %>% select(resp) %>% unlist() %>% table()
-
-## Visualize the response with the data.
+```{r viz-response, eval=FALSE}
 geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
 nn1 = 7
 nn2 = 8
@@ -240,14 +206,14 @@ par(mfrow = c(nn1, nn2)); par(mar = c(3, 3, 1, 1)); par(cex=.7)
 iilist = 1:length(geos)
 for(ii in iilist){
 
-  ## Form our response data (0's and 1's)
+  ## Form the response data (0's and 1's) for all geos
   dat0 = df_model %>% subset(geo_value==geos[ii]) %>%
   select(time_value,
          resp, 
          incidence = "feature_lag0_confirmed_7dav_incidence_prop_indicator-combination" ) 
 
-  ## Combine it with original data for this geo
-  dat = mat%>% as_tibble() %>% filter(geo_value==geos[ii], signal =="confirmed_7dav_incidence_prop") %>%
+  ## Combine it with original data for this geo (all time points)
+  dat = mat %>% as_tibble() %>% filter(geo_value==geos[ii], signal =="confirmed_7dav_incidence_prop") %>%
     select(time_value, incidence = value) 
   dat_combined = dat %>% full_join(dat0, by = c("time_value", "incidence"))
   dat_combined = dat_combined %>% mutate(resp=replace(resp, is.na(resp), 0))
