@@ -42,10 +42,10 @@ SVM, xgboost), for a hotspot detection model.
 	 
 Then, form a covariate matrix by time-lagging these by 0 through 28
 days. Additionally, add features by calculating "slopes of JHU IR from the past
-x days", where $x \in \{3,5,10,15,20..\}$.
+x days", where $x \in \{3,6,9,12,15..\}$.
 
-The resulting covariate matrix is roughly 3162 by 193 at the state level, and OOO
-by OOO at the county level.
+The resulting covariate matrix is roughly 3162 by 193 at the state level, and 52093
+by 193 at the county level. We have 953 different counties in our sample. 
 
 **Response data**
 
@@ -69,6 +69,7 @@ five consecutive time blocks are used as test sets (folds).
 
 ## Results
 
+### State
 
 First, visualizing the hotspots for the state level data:
 
@@ -138,28 +139,24 @@ test set
 </tbody>
 </table>
 
-The numbers in the county level data are.. (todo: either fill these in or exclude altogether)
-
-
-[./figures/]()
 
 Using `n_ahead=28`, the performances of four different classifiers can be
 visualized as ROC curves. Here, thick transparent lines are the results using
 Facebook data, and thin lines are those excluding Facebook data.
 
-![](figures/for_v1_report/ROC_state_notweighted.png)
+![](figures/for_v1_report/ROC_state_notweighted.png){width=60%}
 
 We can also see population-weighted ROC curves:
 
-![](figures/for_v1_report/ROC_state_weighted.png)
+![](figures/for_v1_report/ROC_state_weighted.png){width=60%}
 
 Given the class imbalance, we can look at precision-recall plots:
 
-![](figures/for_v1_report/ROCPR_state.png)
+![](figures/for_v1_report/ROCPR_state.png){width=60%}
 
 And now the same precision-recall plot, but considering a logged x axis:
 
-![](figures/for_v1_report/ROCPR_state_log.png)
+![](figures/for_v1_report/ROCPR_state_log.png){width=60%}
 
 Now, choosing a summary statistic to measure the *advantage* in performance
 using Facebook data, we'll calculate *difference* in the area under the curve
@@ -167,23 +164,118 @@ using Facebook data, we'll calculate *difference* in the area under the curve
 ahead hotspots are defined as** i.e. for a range of `n_ahead`, in $\{10, \cdots,
 30\}$:
 
-[./figures/]()
+![](figures/for_v1_report/auc-by-nahead-state.png)
 
-This depends a bit on how the training/test split is made among geographical
+Interestingly, the advantage of using Facebook data increases as we try to predict a hotspot in a date further in the future. 
+
+The analysis depends a bit on how the training/test split is made among geographical
 regions. If we use a different random seed for splitting, the ROC curves can
 differ quite a bit:
 
-![](figures/for_v1_report/ROC_state_newseed.png)
+![](figures/for_v1_report/ROC_state_newseed.png){width=60%}
 
 While the classifier performance varies by seed, the advantage that FB grants is
 clearly always present.
+
+### County
+
+The numbers in the county level data are:
+
+<table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;">
+ <thead>
+  <tr>
+   <th style="text-align:left;"> Response </th>
+   <th style="text-align:right;"> Count </th>
+  </tr>
+ </thead>
+<tbody>
+  <tr>
+   <td style="text-align:left;"> 0 </td>
+   <td style="text-align:right;"> 43437 </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;"> 1 </td>
+   <td style="text-align:right;"> 810 </td>
+  </tr>
+</tbody>
+</table>
+
+
+training set:
+
+<table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;">
+ <thead>
+  <tr>
+   <th style="text-align:left;"> Response </th>
+   <th style="text-align:right;"> Count </th>
+  </tr>
+ </thead>
+<tbody>
+  <tr>
+   <td style="text-align:left;"> 0 </td>
+   <td style="text-align:right;"> 30611 </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;"> 1 </td>
+   <td style="text-align:right;"> 6063 </td>
+  </tr>
+</tbody>
+</table>
+
+test set
+
+<table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;">
+ <thead>
+  <tr>
+   <th style="text-align:left;"> Response </th>
+   <th style="text-align:right;"> Count </th>
+  </tr>
+ </thead>
+<tbody>
+  <tr>
+   <td style="text-align:left;"> 0 </td>
+   <td style="text-align:right;"> 12826 </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;"> 1 </td>
+   <td style="text-align:right;"> 2593 </td>
+  </tr>
+</tbody>
+</table>
+
+Using `n_ahead=28`, the performances of four different classifiers can be
+visualized as ROC curves. Here, thick transparent lines are the results using
+Facebook data, and thin lines are those excluding Facebook data.
+
+![](figures/for_v1_report/ROC_county_notweighted.png){width=80%}
+
+And population weighted:
+
+![](figures/for_v1_report/ROC_county_weighted.png){width=80%}
+
+The precision-recall plot:
+
+![](figures/for_v1_report/ROCPR_county.png){width=80%}
+
+And the precision-recall plot considering a logged x axis:
+
+![](figures/for_v1_report/ROCPR_county_log.png){width=80%}
+
+Now, choosing a summary statistic to measure the *advantage* in performance
+using Facebook data, we'll calculate *difference* in the area under the curve
+(AUC) between the two versions, for each classifier, as a function of **how far
+ahead hotspots are defined as** i.e. for a range of `n_ahead`, in $\{10, \cdots,
+30\}$:
+
+![](figures/for_v1_report/auc-by-nahead-county.png)
+
 
 ## Code
 
 Some variables and functions:
 
 - `lags` are the number of lagged values taken of the JHU cases and FB. Current
-  default is `lags=28`.
+  default is `lags=28`. `slope = TRUE` adds slopes to the feature matrix that is composed by lagged values
 - `n_ahead` is the number of days we want to look ahead, in forming the response
   data (0 or 1) for hotspot detection. Current default choice is `n_ahead=28`.
 - We compare the $\bar y_2$ average of 1 week period ending `n_ahead` days from
@@ -195,6 +287,7 @@ Some variables and functions:
   collection of multiple sources.
 - `read_to_model()` further cleans + readies the data into a $y|X$ type matrix,
   to feed into functions like `glmnet()`.
+- all the results are for `onset = FALSE`. If `onset = TRUE`, a hotspot (from the definition of our response variable) will only be considered a hotspot if it has not been a hotspot recently. 
 
 First, we download and form the data.
 
