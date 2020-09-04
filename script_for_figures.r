@@ -75,12 +75,13 @@ for(n_ahead in c(28,21,14)){
     } else {
       df_traintest <- df_model %>% filter(!(geo_value %in% validation_geos))
       df_validation <- df_model %>% filter(geo_value %in% validation_geos)
-      splitted <- sample_split_geo(df_traintest, pct_test = 0.3)
+      splitted <- sample_split_geo(df_traintest, pct_test = 0.3, seed = 101)
       
       ## Temporary check: show how many 1's exist
-#      df_model %>% select(resp) %>% table()
+      df_model %>% select(resp) %>% table()
 #      df_traintest %>% select(resp) %>% table()
       splitted$df_train %>% select(resp) %>% table()
+      #splitted$df_train %>% select(resp) %>% table() %>% kable() %>% kable_styling(full_width = FALSE)
       splitted$df_test %>% select(resp) %>% table()
 #      df_validation %>% select(resp) %>% table()
       nfold = 5

@@ -21,7 +21,7 @@ library(glmnet)
 source("helpers.r")
 
 ## Location of your covidcast R package.
-load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
+## load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
 ## load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast")
 ```
 
@@ -44,7 +44,7 @@ Then, form a covariate matrix by time-lagging these by 0 through 28
 days. Additionally, add features by calculating "slopes of JHU IR from the past
 x days", where $x \in \{3,5,10,15,20..\}$.
 
-The resulting covariate matrix is roughly OOO by OOO at the state level, and OOO
+The resulting covariate matrix is roughly 3162 by 193 at the state level, and OOO
 by OOO at the county level.
 
 **Response data**
@@ -72,35 +72,94 @@ five consecutive time blocks are used as test sets (folds).
 
 First, visualizing the hotspots for the state level data:
 
-[.figures/]()
+![](figures/for_v1_report/hotspot_vis_state.png)
 
 The distribution of 0's and 1's in the entire state level data is
 
-[.figures/]()
+<table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;">
+ <thead>
+  <tr>
+   <th style="text-align:left;"> Response </th>
+   <th style="text-align:right;"> Count </th>
+  </tr>
+ </thead>
+<tbody>
+  <tr>
+   <td style="text-align:left;"> 0 </td>
+   <td style="text-align:right;"> 2705 </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;"> 1 </td>
+   <td style="text-align:right;"> 457 </td>
+  </tr>
+</tbody>
+</table>
 
 
 training set:
 
-[.figures/]()
+<table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;">
+ <thead>
+  <tr>
+   <th style="text-align:left;"> Response </th>
+   <th style="text-align:right;"> Count </th>
+  </tr>
+ </thead>
+<tbody>
+  <tr>
+   <td style="text-align:left;"> 0 </td>
+   <td style="text-align:right;"> 1906 </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;"> 1 </td>
+   <td style="text-align:right;"> 326 </td>
+  </tr>
+</tbody>
+</table>
 
 test set
 
-[.figures/]()
+<table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;">
+ <thead>
+  <tr>
+   <th style="text-align:left;"> Response </th>
+   <th style="text-align:right;"> Count </th>
+  </tr>
+ </thead>
+<tbody>
+  <tr>
+   <td style="text-align:left;"> 0 </td>
+   <td style="text-align:right;"> 799 </td>
+  </tr>
+  <tr>
+   <td style="text-align:left;"> 1 </td>
+   <td style="text-align:right;"> 131 </td>
+  </tr>
+</tbody>
+</table>
 
 The numbers in the county level data are.. (todo: either fill these in or exclude altogether)
 
 
-[.figures/]()
+[./figures/]()
 
 Using `n_ahead=28`, the performances of four different classifiers can be
 visualized as ROC curves. Here, thick transparent lines are the results using
 Facebook data, and thin lines are those excluding Facebook data.
 
-[./figures/]()
+![](figures/for_v1_report/ROC_state_notweighted.png)
 
 We can also see population-weighted ROC curves:
 
-[./figures/]()
+![](figures/for_v1_report/ROC_state_weighted.png)
+
+Given the class imbalance, we can look at precision-recall plots:
+
+![](figures/for_v1_report/ROCPR_state.png)
+
+And now the same precision-recall plot, but considering a logged x axis:
+
+![](figures/for_v1_report/ROCPR_state_log.png)
 
 Now, choosing a summary statistic to measure the *advantage* in performance
 using Facebook data, we'll calculate *difference* in the area under the curve
@@ -114,7 +173,7 @@ This depends a bit on how the training/test split is made among geographical
 regions. If we use a different random seed for splitting, the ROC curves can
 differ quite a bit:
 
-[./figures/]()
+![](figures/for_v1_report/ROC_state_newseed.png)
 
 While the classifier performance varies by seed, the advantage that FB grants is
 clearly always present.

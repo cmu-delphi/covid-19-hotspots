@@ -332,11 +332,7 @@ sample_split_geo <- function(df_model, pct_test = 0.3, seed=0){
   ## start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"geo_value"]
   ## start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"geo_value"]
   geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
-<<<<<<< HEAD
-  set.seed(102)
-=======
   set.seed(seed)
->>>>>>> 21d1e4f13e254568c6ffdc68b2dc01331e7fcdd8
   test_ind =  sample(length(geos), length(geos) * pct_test)
   test_geos = geos[test_ind]
   train_geos = geos[-test_ind]
@@ -492,16 +488,10 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1){
                          alpha = alpha,
                          foldid = foldid,
                          nfold = nfold)
-<<<<<<< HEAD
-  fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
-                      y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.min, alpha = alpha)
-  preds = predict(fit_lasso, newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
-=======
   ## fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
   ##                     y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.1se, alpha = alpha)
   preds = predict(fit_lasso, s = "lambda.min", ## TODO: double check
                   newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1] ## use minimum CV score instead of 1se
->>>>>>> 6e3d9c0dc2d8e8d373d54bb623fb662413cd79a9
 
   ## Out checks (should be common for all fit_OOOO() functions)
   stopifnot(length(preds) == nrow(df_test))
@@ -815,7 +805,7 @@ plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_exis
 
   df_temp <- inner_join(predictions, get_population(geo_type), by = "geo_value")
   df_temp <- reshape2::melt(df_temp, id.vars = c("geo_value", "time_value", "resp", "population"))
-  df_auc <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(function(df, ...){data.frame(auc = round(auc(response = df$resp, predictor = df$value)[1], 3))})
+  df_auc <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(function(df, ...){data.frame(auc = round(pROC::auc(response = df$resp, predictor = df$value)[1], 3))})
   if(only_return_auc) return(df_auc)
   df_plot <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(~roc_onemodel(.x, popweighted = popweighted))
 
@@ -904,7 +894,6 @@ calc_auc <- function(destin = "figures", splitted, lags, n_ahead, geo_type, fn_r
   predictions_onlylaggedresponse <- fit_predict_models(splitted$df_train %>% select(geo_value, time_value, resp, contains(response)),
                                                        splitted$df_test %>% select(geo_value, time_value, resp, contains(response)),
                                                        lags = lags, n_ahead = n_ahead)
-
   df_auc_no_fb = plot_roc(predictions_onlylaggedresponse, geo_type = geo_type, popweighted = FALSE, only_return_auc = TRUE)
 
   ####################################################
