@@ -3,6 +3,7 @@ library(lubridate)
 library(xgboost)
 library(pROC)
 
+
 ##' adds NA to value if there is no signal for a particular day
 ##'
 ##' @param df data frame with columns time_value, value, data_source, signal, geo_value
@@ -331,7 +332,7 @@ sample_split_geo <- function(df_model, pct_test = 0.3){
   ## start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"geo_value"]
   ## start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"geo_value"]
   geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
-  set.seed(0)
+  set.seed(102)
   test_ind =  sample(length(geos), length(geos) * pct_test)
   test_geos = geos[test_ind]
   train_geos = geos[-test_ind]
@@ -422,12 +423,12 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   predictions <- df_test %>% select(geo_value, time_value, resp)
 
   cat("\tFitting LASSO...")
-  preds <- fit_logistic_regression(df_train, df_test, nfold = 10, alpha = 0)
+  preds <- fit_logistic_regression(df_train, df_test, alpha = 1)
   predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
 
   cat("\tFitting Ridge...")
-  preds <- fit_logistic_regression(df_train, df_test, nfold = 10, alpha = 1)
+  preds <- fit_logistic_regression(df_train, df_test, alpha = 0)
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
 
@@ -465,10 +466,10 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
 ##'   covariates.
 ##' @param df_test Test matrix. Same format as df_train.
 ##' @param nfold 5 (previously 10).
-##' @param alpha 0 for lasso, or 1 for ridge regression. Used by \code{glmnet()}.
+##' @param alpha 1 for lasso, or 0 for ridge regression. Used by \code{glmnet()}.
 ##'
 ##' @return Numeric vector the same length as \code{nrow(df_test)}.
-fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 0){
+fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1){
 
   ## Input checks (should be common for all fit_OOOO() functions
   stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_train)))
@@ -488,7 +489,7 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 0){
                          foldid = foldid,
                          nfold = nfold)
   fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
-                      y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.1se, alpha = alpha)
+                      y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.min, alpha = alpha)
   preds = predict(fit_lasso, newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
 
   ## Out checks (should be common for all fit_OOOO() functions)
