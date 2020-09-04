@@ -423,12 +423,12 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   predictions <- df_test %>% select(geo_value, time_value, resp)
 
   cat("\tFitting LASSO...")
-  preds <- fit_logistic_regression(df_train, df_test, alpha = 1)
+  preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1)
   predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
 
   cat("\tFitting Ridge...")
-  preds <- fit_logistic_regression(df_train, df_test, alpha = 0)
+  preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0)
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
 
@@ -482,15 +482,23 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1){
   foldid <- make_foldid(df_train, nfold)
 
   ## Main part of the lasso fitting and predicting
+  browser()
   fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
                          y = df_train$resp,
                          family = "binomial",
                          alpha = alpha,
                          foldid = foldid,
                          nfold = nfold)
+<<<<<<< HEAD
   fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
                       y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.min, alpha = alpha)
   preds = predict(fit_lasso, newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
+=======
+  ## fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
+  ##                     y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.1se, alpha = alpha)
+  preds = predict(fit_lasso, s = "lambda.min", ## TODO: double check
+                  newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1] ## use minimum CV score instead of 1se
+>>>>>>> 6e3d9c0dc2d8e8d373d54bb623fb662413cd79a9
 
   ## Out checks (should be common for all fit_OOOO() functions)
   stopifnot(length(preds) == nrow(df_test))
