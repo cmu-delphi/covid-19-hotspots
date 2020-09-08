@@ -28,24 +28,30 @@ add_NAval_missing_dates <- function(df){
   })
 }
 
-##' creates a dataframe with lagged information for one geo_value
-##' if slopes = FALSE, creates lagged features
-##' if slopes = TRUE, creates slopes of the time tendencies over t and the past 3, 6, 9... days + adds feature value at time t
+##' Creates a dataframe with lagged information for one geo_value.
+##' If slopes = FALSE, creates only lagged features (up to \code{lags-val} which equals 5).
+##' If slopes = TRUE, creates slopes of the time tendencies over t and the past 3, 6, 9... days + adds feature value at time t
 ##' assumes that time column has points for all dates!!!
 ##'
-##' @param df dataframe with ONE geo_value and ONE feature (which will be lagged), columns val, time
-##' @param lags number of past values to include in the data frame; for time t, dataframe will have in one row \eqn{X_t} until \eqn{X_{t-lag}}.
+##' @param df dataframe with ONE geo_value and ONE feature (which will be
+##'   lagged), columns val, time
+##' @param lags Maximum number of past values to include in the data frame FOR
+##'   SLOPE CALCULATION.
 ##' @param name variable name that will be used for the lagged features
-##' @param slopes if TRUE, returns a dataframe with slopes based on the past feature values and if FALSE, returs raw lagged features
+##' @param slopes if TRUE, returns a dataframe with slopes based on the past
+##'   feature values and if FALSE, returs raw lagged features
 ##' @return dataframe with lagged features for one geo_value OR slopes
 lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
+
+  ## The fixed number of time lags for the data values themselves.
+  lags_val = 5
   df <- df %>% arrange(time_value)
   signal <- df$value
   timestamp <- df$time_value
 
   ## if you want more lags than available points, returns empty dataframe
   len <- nrow(df)
-  if(len<=lags){
+  if(len <= lags_val){
     return(data.frame())
   }
 
@@ -56,14 +62,14 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
   ## I think it's reasonable to interpolate the TS as long as there are not many sequential missing obs
   ## low priority
 
-  out <- data.frame(time_value = timestamp[(lags+1):len])
+  out <- data.frame(time_value = timestamp[(lags_val+1):len])
 
   ## if(!slopes){
-    ## adding lagged feature from t-0, t-1, t-2, until t-lags
-    for(i in 0:lags){
-      out <- suppressMessages(bind_cols(out, signal[(lags+1-i):(len-i)]))
+    ## adding lagged feature from t-0, t-1, t-2, until t-lags_val
+    for(i in 0:lags_val){
+      out <- suppressMessages(bind_cols(out, signal[(lags_val+1-i):(len-i)]))
     }
-    names(out) = c("time_value", paste(name, "_lag", 0:lags, sep = ""))
+    names(out) = c("time_value", paste(name, "_lag", 0:lags_val, sep = ""))
   ## }
   if(slopes){
     npoints = lags+1
@@ -373,10 +379,43 @@ sample_split_geo <- function(df_model, pct_test = 0.3, seed=0){
 }
 
 
+#' Make |foldid| argument for covariate matrix |x| and |nfold|-fold
+#' cross-validation; makes nfold geo partitions.
+#'
+#' @param x covariate matrix.
+#' @param nfold nfold.
+#' @param seed splitting geos once more.
+#'
+#' @return A numeric vector containing elements of \code{(1:nfold)} specifying
+#'   row numbers of X (or entry numbers of y) to be used for each CV fold.
+make_foldid_geo <- function(x, nfold, seed=10210){
+
+  ## Validation_geos.
+  geos = x %>% select(geo_value) %>% unlist()
+  unique_geos = geos %>% unique() %>% sort()
+  set.seed(seed)
+  geo_blocks = split(sample(unique_geos),
+                     sort(1:length(unique_geos) %% nfold))
+  cv_inds = lapply(1:nfold, function(ifold){
+    which(geos %in% geo_blocks[[ifold]])
+  })
+
+  final_inds = rep(NA, length(geos))
+  for(ifold in 1:nfold){
+    inds = cv_inds[[ifold]]
+    final_inds[inds] = ifold
+  }
+
+  ## Quick test before returning
+  stopifnot(all((x[which(final_inds==1),] %>%
+                select(geo_value) %>%
+                unique() %>% unlist()) %in% geo_blocks[[1]]))
+  return(final_inds)
+}
 
 
 #' Make |foldid| argument for covariate matrix |x| and |nfold|-fold
-#' cross-validation; makes nfold consecutive time blocks
+#' cross-validation; makes nfold consecutive time blocks.
 #'
 #' @param x covariate matrix
 #' @param nfold nfold
@@ -427,16 +466,18 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
 
-  cat("\tFitting Ridge...")
-  preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0)
-  predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  cat(" Done!\n")
 
-  #### IF
-  cat("\tFitting SVM...")
-  preds <- fit_svm(df_train, df_test)
-  predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  cat(" Done!\n")
+  ## Note: only using lasso for now.
+
+  ## cat("\tFitting Ridge...")
+  ## preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0)
+  ## predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  ## cat(" Done!\n")
+
+  ## cat("\tFitting SVM...")
+  ## preds <- fit_svm(df_train, df_test)
+  ## predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  ## cat(" Done!\n")
 
   cat("\tFitting xgboost...")
   preds <- fit_xgb(df_train, df_test)
@@ -466,10 +507,14 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
 ##'   covariates.
 ##' @param df_test Test matrix. Same format as df_train.
 ##' @param nfold 5 (previously 10).
-##' @param alpha 1 for lasso, or 0 for ridge regression. Used by \code{glmnet()}.
+##' @param alpha 1 for lasso, or 0 for ridge regression. Used by
+##'   \code{glmnet()}.
+##' @param geo_cv_split_seed Random seed for geo split for cross validation by
+##'   \code{glmnet::glmnet()}.
 ##'
 ##' @return Numeric vector the same length as \code{nrow(df_test)}.
-fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1){
+fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1,
+                                    geo_cv_split_seed = 10210){
 
   ## Input checks (should be common for all fit_OOOO() functions
   stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_train)))
@@ -478,15 +523,18 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1){
   ## Input check
   stopifnot(alpha %in% c(0,1)) ## Only allow ridge or lasso for now.
 
-  ## Make contiguous time blocks for CV
-  foldid <- make_foldid(df_train, nfold)
+  ## (Not used for now) Make contiguous time blocks for CV
+  ## foldid <- make_foldid(df_train, nfold)
+
+  ## Split by geo
+  foldid <- make_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
 
   ## Main part of the lasso fitting and predicting
   fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
                          y = df_train$resp,
                          family = "binomial",
                          alpha = alpha,
-                         foldid = foldid,
+                         ## foldid = foldid,
                          nfold = nfold)
   ## fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
   ##                     y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.1se, alpha = alpha)

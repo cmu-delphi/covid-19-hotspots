@@ -10,7 +10,7 @@ output:
 ---
 
 ```{r global_options, include=FALSE}
-knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=FALSE, cache=TRUE,
+knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=TRUE, cache=TRUE,
                       warning=FALSE, message=FALSE)
 library(ggplot2)
 library(covidcast)
@@ -21,8 +21,11 @@ library(glmnet)
 source("helpers.r")
 
 ## Location of your covidcast R package.
-## load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
+load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
 ## load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast")
+
+## Location to print plots to
+outputdir = "./figures"
 ```
 
 ## Goal
@@ -65,6 +68,7 @@ curves.
 
 **Cross-validation for `glmnet`** is done in a block-wise fashion **in time**;
 five consecutive time blocks are used as test sets (folds).
+
 
 
 ## Results
@@ -291,29 +295,27 @@ Some variables and functions:
 
 First, we download and form the data.
 
-```{r form-data, eval=FALSE}
+```{r form-data, eval=TRUE}
+source("~/repos/covid-19-hotspots/helpers.r")
 ## Setup
 lags = 28
-geo_type = "state" ## or "county", or "MSA"
+n_ahead = 28
+threshold = 0.25
+geo_type = "state" ## or "county"
 response = "confirmed_7dav_incidence_prop"
 fn_response = response_diff_avg_1week_min20
 fn_response_name = "response_diff_avg_1week_min20"
+slope = TRUE
+onset = FALSE
+split_type = "geo"
 
 ## Read in data once
 data_sources = c("indicator-combination", 
-                 "fb-survey", 
-                 "fb-survey", 
-                 "fb-survey", 
                  "fb-survey")
 signals = c("confirmed_7dav_incidence_prop", 
-            "smoothed_cli", 
-            "smoothed_nohh_cmnty_cli", 
-            "smoothed_wcli", 
             "smoothed_hh_cmnty_cli")
 start_day = as.Date("2020-05-01")
 end_day = as.Date("2020-08-10")
-validation_days = seq(end_day-30, end_day, by = "days") ## Old! to be retired soon
-
 signals = data.frame(data_sources = data_sources, signals = signals)
 suppressMessages({
   mat = covidcast_signals(signals,
@@ -323,19 +325,20 @@ mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
 
 ## Form the y|X matrix
 df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
+df_model %>% names() %>% print()
 
 ## Further split into training and test
-df_traintest <- df_model %>% filter(!(geo_value %in% validation_geos))
-df_validation <- df_model %>% filter(geo_value %in% validation_geos)
-splitted <- sample_split_geo(df_traintest, pct_test = 0.3, seed = geo_split_seed)
+geo_split_seed = 100
+geo_cv_split_seed = 1000
+splitted <- sample_split_geo(df_model, pct_test = 0.3, seed = geo_split_seed)
 
 ## See the distribution of 1's and 0's
 df_model %>% select(resp) %>% table() %>% print()
-df_traintest %>% select(resp) %>% table() %>% print()
 splitted$df_train %>% select(resp) %>% table() %>% print()
 splitted$df_test %>% select(resp) %>% table() %>% print()
-df_validation %>% select(resp) %>% table() %>% print()
-foldid <- make_foldid(splitted$df_train, nfold = 5)
+
+source("helpers.r")
+foldid <- make_foldid_geo(splitted$df_train, nfold = 5, geo_cv_split_seed)
 for(ifold in 1:nfold){
   splitted$df_train[which(foldid==ifold),] %>% select(resp) %>% table() %>% print()
 }
@@ -343,36 +346,55 @@ for(ifold in 1:nfold){
 
 Now, fit the hot-spot models and visualize the model performances.
 
-```{r make-plots, eval=FALSE}
-make_plots(destin = outputdir, splitted, lags, n_ahead, geo_type,
-           fn_response_name, threshold, slope, split_type, onset)
+```{r make-plots, eval=TRUE}
+make_plots(destin = outputdir,
+           splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope, split_type, onset)
 ```
 
-Also visualize the 1's and 0's in a plot, in the state level data.
+Also visualize the 1's and 0's in the state level data (highlighting by each CV
+fold *and* test data, in different color boxes)
 
 ```{r viz-response, eval=FALSE}
-geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
+## geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
+foldid <- make_foldid_geo(splitted$df_train, nfold = 5, seed = geo_cv_split_seed)
+state_splits = lapply(1:nfold, function(ifold)
+  splitted$df_train[which(foldid==ifold),] %>% select(geo_value) %>% unlist() %>% unique())
 nn1 = 7
 nn2 = 8
 par(mfrow = c(nn1, nn2)); par(mar = c(3, 3, 1, 1)); par(cex=.7)
-iilist = 1:length(geos)
-for(ii in iilist){
+## iilist = 1:length(geos)
+geos = lapply(1:nfold, function(ifold){
+  splitted$df_train[which(foldid==ifold),] %>% select(geo_value) %>% unique()}) %>%
+  unlist()
+test_geos = splitted$df_test %>% select(geo_value) %>% unlist() %>% unique()
+geos = c(geos, test_geos)
+for(geo in geos){
 
   ## Form the response data (0's and 1's) for all geos
-  dat0 = df_model %>% subset(geo_value==geos[ii]) %>%
+  dat0 = df_model %>% subset(geo_value==geo) %>%
   select(time_value,
          resp, 
          incidence = "feature_lag0_confirmed_7dav_incidence_prop_indicator-combination" ) 
 
   ## Combine it with original data for this geo (all time points)
-  dat = mat %>% as_tibble() %>% filter(geo_value==geos[ii], signal =="confirmed_7dav_incidence_prop") %>%
+  dat = mat %>% as_tibble() %>% filter(geo_value==geo, signal =="confirmed_7dav_incidence_prop") %>%
     select(time_value, incidence = value) 
   dat_combined = dat %>% full_join(dat0, by = c("time_value", "incidence"))
   dat_combined = dat_combined %>% mutate(resp=replace(resp, is.na(resp), 0))
 
-  ## Make a plot
+  ## Make the plot
   dat_combined %>% with(plot(time_value, incidence, col = resp+1, type='o', pch=16, ylim= c(0,100)))
-  abline(h = 30, col='grey50', lwd=3)
-  legend("topleft", legend=geos[ii], bty='n', cex=3)
+  abline(h = 20, col='grey50', lwd=3)
+  legend("topleft", legend=toupper(geo), bty='n', cex=3)
+
+  ## Also add legend for fold id (really bad code)
+  splitnum = sapply(state_splits, function(mysplit) geo %in% mysplit) %>% which()
+  if(length(splitnum) == 0){
+    splitnum = "TEST"
+  } else {
+    box(lty=1, col=splitnum + 1, lwd=3)
+  }
+  legend("topright", legend = paste0("\nfold ", splitnum),
+         bty="n", cex=2)
 }
 ```
