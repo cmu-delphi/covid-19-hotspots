@@ -384,7 +384,7 @@ sample_split_geo <- function(df_model, pct_test = 0.3, seed=0){
 #'
 #' @param x covariate matrix.
 #' @param nfold nfold.
-#' @param seed splitting geos once more.
+#' @param seed seed number to be used for splitting geos..
 #'
 #' @return A numeric vector containing elements of \code{(1:nfold)} specifying
 #'   row numbers of X (or entry numbers of y) to be used for each CV fold.
@@ -456,13 +456,14 @@ make_foldid <- function(x, nfold){
 ##' @param n_ahead number of days ahead that response will be computed
 ##' @param response string just for rendering plots later on
 ##' @return
-fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "confirmed_7dav_incidence_num"){
+fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "confirmed_7dav_incidence_num",
+                               geo_cv_split_seed = 10210){
   cat("Fitting models:\n")
 
   predictions <- df_test %>% select(geo_value, time_value, resp)
 
   cat("\tFitting LASSO...")
-  preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1)
+  preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1, geo_cv_split_seed = geo_cv_split_seed )
   predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
 
@@ -470,7 +471,7 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   ## Note: only using lasso for now.
 
   ## cat("\tFitting Ridge...")
-  ## preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0)
+  ## preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0, geo_cv_split_seed = geo_cv_split_seed)
   ## predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   ## cat(" Done!\n")
 
@@ -479,10 +480,10 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   ## predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   ## cat(" Done!\n")
 
-  cat("\tFitting xgboost...")
-  preds <- fit_xgb(df_train, df_test)
-  predictions[[paste("xgb_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  cat(" Done!\n")
+  ## cat("\tFitting xgboost...")
+  ## preds <- fit_xgb(df_train, df_test)
+  ## predictions[[paste("xgb_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  ## cat(" Done!\n")
 
   ### can add more models here!!! add \hat{y} as a col to |predictions|
 
@@ -524,22 +525,20 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1,
   stopifnot(alpha %in% c(0,1)) ## Only allow ridge or lasso for now.
 
   ## (Not used for now) Make contiguous time blocks for CV
-  ## foldid <- make_foldid(df_train, nfold)
+  foldid <- make_foldid(df_train, nfold)
 
   ## Split by geo
-  foldid <- make_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
+  ## foldid <- make_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
 
   ## Main part of the lasso fitting and predicting
   fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
                          y = df_train$resp,
                          family = "binomial",
                          alpha = alpha,
-                         ## foldid = foldid,
+                         foldid = foldid,
                          nfold = nfold)
-  ## fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
-  ##                     y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.1se, alpha = alpha)
-  preds = predict(fit_lasso, s = "lambda.min", ## TODO: double check
-                  newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1] ## use minimum CV score instead of 1se
+  preds = predict(fit_lasso, s = "lambda.min",
+                  newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
 
   ## Out checks (should be common for all fit_OOOO() functions)
   stopifnot(length(preds) == nrow(df_test))
@@ -889,21 +888,27 @@ plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_exis
 ##' @param splitted a list containing train and test data.
 ##'
 ##' @return
-make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope, split_type, onset){
+make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
+                       fn_response_name, threshold, slope, split_type, onset,
+                       geo_cv_split_seed = 10210){
 
   ######################################
   ## Model with lagged responses only ##
   ######################################
   predictions_onlylaggedresponse <- fit_predict_models(splitted$df_train %>% select(geo_value, time_value, resp, contains(response)),
                                                        splitted$df_test %>% select(geo_value, time_value, resp, contains(response)),
-                                                       lags = lags, n_ahead = n_ahead)
+                                                       lags = lags, n_ahead = n_ahead,
+                                                       geo_cv_split_seed = geo_cv_split_seed)
   a = plot_adapted_roc(predictions_onlylaggedresponse, geo_type = geo_type)
   a
 
   ####################################################
   ## Model with lagged responses + facebook signals ##
   ####################################################
-  predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test, lags = lags, n_ahead = n_ahead)
+  predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test,
+                                                      lags = lags, n_ahead = n_ahead,
+                                                      geo_cv_split_seed = geo_cv_split_seed)
+
   b = plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type)
   b
 

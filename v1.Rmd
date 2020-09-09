@@ -296,7 +296,6 @@ Some variables and functions:
 First, we download and form the data.
 
 ```{r form-data, eval=TRUE}
-source("~/repos/covid-19-hotspots/helpers.r")
 ## Setup
 lags = 28
 n_ahead = 28
@@ -328,8 +327,8 @@ df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, thr
 df_model %>% names() %>% print()
 
 ## Further split into training and test
-geo_split_seed = 100
-geo_cv_split_seed = 1000
+geo_split_seed = 10
+geo_cv_split_seed = 100
 splitted <- sample_split_geo(df_model, pct_test = 0.3, seed = geo_split_seed)
 
 ## See the distribution of 1's and 0's
@@ -337,7 +336,6 @@ df_model %>% select(resp) %>% table() %>% print()
 splitted$df_train %>% select(resp) %>% table() %>% print()
 splitted$df_test %>% select(resp) %>% table() %>% print()
 
-source("helpers.r")
 foldid <- make_foldid_geo(splitted$df_train, nfold = 5, geo_cv_split_seed)
 for(ifold in 1:nfold){
   splitted$df_train[which(foldid==ifold),] %>% select(resp) %>% table() %>% print()
@@ -348,11 +346,11 @@ Now, fit the hot-spot models and visualize the model performances.
 
 ```{r make-plots, eval=TRUE}
 make_plots(destin = outputdir,
-           splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope, split_type, onset)
+           splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope, split_type, onset, geo_cv_split_seed)
 ```
 
 Also visualize the 1's and 0's in the state level data (highlighting by each CV
-fold *and* test data, in different color boxes)
+fold *and* test data, in different color boxes):
 
 ```{r viz-response, eval=FALSE}
 ## geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
