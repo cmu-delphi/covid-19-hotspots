@@ -11,9 +11,8 @@ source("helpers.r")
 ## load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
 load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast")
 load_all("deletar_depois/covidcast/R-packages/covidcast")
+
 lags = 28
-
-
 response = "confirmed_7dav_incidence_prop"
 fn_response_name = "response_diff_avg_1week_min20"
 fn_response = response_diff_avg_1week_min20
@@ -21,23 +20,23 @@ geo_type = "county"
 slope = TRUE
 split_type = "geo"
 onset = FALSE
-n_ahead = 28
+n_ahead = 21
 threshold = .25
 
 ## re-run the following every time geo_type or response changes!
 if(FALSE){
   data_sources = c("indicator-combination", 
-                   "fb-survey", 
-                   "fb-survey", 
-                   "fb-survey", 
+                   # "fb-survey", 
+                   # "fb-survey", 
+                   # "fb-survey", 
                    "fb-survey")
   signals = c("confirmed_7dav_incidence_prop", 
-              "smoothed_cli", 
-              "smoothed_nohh_cmnty_cli", 
-              "smoothed_wcli", 
+              # "smoothed_cli", 
+              # "smoothed_nohh_cmnty_cli", 
+              # "smoothed_wcli", 
               "smoothed_hh_cmnty_cli")
   start_day = as.Date("2020-05-01")
-  end_day = as.Date("2020-08-25")
+  end_day = as.Date("2020-08-30")
   validation_days = seq(end_day-30, end_day, by = "days")
   signals = data.frame(data_sources = data_sources, signals = signals)
   suppressMessages({

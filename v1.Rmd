@@ -185,25 +185,6 @@ clearly always present.
 
 The numbers in the county level data are:
 
-<table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;">
- <thead>
-  <tr>
-   <th style="text-align:left;"> Response </th>
-   <th style="text-align:right;"> Count </th>
-  </tr>
- </thead>
-<tbody>
-  <tr>
-   <td style="text-align:left;"> 0 </td>
-   <td style="text-align:right;"> 43437 </td>
-  </tr>
-  <tr>
-   <td style="text-align:left;"> 1 </td>
-   <td style="text-align:right;"> 810 </td>
-  </tr>
-</tbody>
-</table>
-
 
 training set:
 
@@ -324,7 +305,10 @@ mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
 
 ## Form the y|X matrix
 source('helpers.r')
+t0 <- Sys.time()
+t0
 df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
+Sys.time() - t0
 df_model %>% names() %>% print()
 ## save(df_model, mat, s, n_ahead, threshold, geo_type, response, fn_response, fn_response_name, slope, onset, split_type,
 ##      file = file.path(outputdir, "data-county.Rdata"))
@@ -341,7 +325,7 @@ splitted$df_train %>% select(resp) %>% table() %>% print()
 splitted$df_test %>% select(resp) %>% table() %>% print()
 
 foldid <- make_foldid_geo(splitted$df_train, nfold = 5, geo_cv_split_seed)
-for(ifold in 1:nfold){
+for(ifold in 1:5){
   splitted$df_train[which(foldid==ifold),] %>% select(resp) %>% table() %>% print()
 }
 ```

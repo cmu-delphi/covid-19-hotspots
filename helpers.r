@@ -44,14 +44,13 @@ add_NAval_missing_dates <- function(df){
 lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
 
   ## The fixed number of time lags for the data values themselves.
-  lags_val = 5
   df <- df %>% arrange(time_value)
   signal <- df$value
   timestamp <- df$time_value
 
   ## if you want more lags than available points, returns empty dataframe
   len <- nrow(df)
-  if(len <= lags_val){
+  if(len <= lags){
     return(data.frame())
   }
 
@@ -62,42 +61,38 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
   ## I think it's reasonable to interpolate the TS as long as there are not many sequential missing obs
   ## low priority
 
-  out <- data.frame(time_value = timestamp[(lags_val+1):len])
-
-  ## if(!slopes){
-    ## adding lagged feature from t-0, t-1, t-2, until t-lags_val
-    for(i in 0:lags_val){
-      out <- suppressMessages(bind_cols(out, signal[(lags_val+1-i):(len-i)]))
-    }
-    names(out) = c("time_value", paste(name, "_lag", 0:lags_val, sep = ""))
-  ## }
+  out <- data.frame(time_value = timestamp[(lags+1):len])
+  
+  ##########
+  if(!slopes){
+  ## adding lagged feature from t-0, t-1, t-2, until t-lags
+  for(i in 0:lags){
+    out <- suppressMessages(bind_cols(out, signal[(lags+1-i):(len-i)]))
+  }
+  names(out) = c("time_value", paste(name, "_lag", 0:lags, sep = ""))
+  }
   if(slopes){
     npoints = lags+1
     nfeats = floor(npoints/3) ## 3 is a magic number. will construct a new feature (new slope) every 3 points
     limits_lm = round(seq(lags+1, 1, length.out = nfeats+1))
-    ## out[[paste(name, "_lag0", sep = "")]] = signal[(lags+1):(len)]
+    out[[paste(name, "_lag0", sep = "")]] = signal[(lags+1):(len)] ## also adds lag0 to the slopes feature matrix
     for(j in 1:nfeats){
       aux <- rep(NA, nrow(out))
       row_pos <- 1
       for(i in (lags+1):(len)){
         signal_vec <- signal[i:(limits_lm[j+1]+row_pos-1)]
-
-        ## ## Printing some things
-        ## print("j")
-        ## print(j)
-        ## print("i")
-        ## print(i)
-        ## print("signal_vec")
-        ## print(signal_vec)
-
-        if(all(is.na(signal_vec))) next
-        x <- (1:length(signal_vec))
-        aux[row_pos] <- coef(lm(signal_vec~x))[2]
+        if(any(is.na(signal_vec))){
+          aux[row_pos] <- NA
+        } else{
+          x <- (1:length(signal_vec))
+          aux[row_pos] <- .lm.fit(cbind(1,x), signal_vec)$coef[2] ## MUCH faster version than lm()
+        }
         row_pos <- row_pos + 1
       }
       out[[paste(name, "_slope", j, sep = "")]] <- aux
     }
   }
+  
 
   return(out)
 }
