@@ -29,14 +29,14 @@ add_NAval_missing_dates <- function(df){
 }
 
 ##' Creates a dataframe with lagged information for one geo_value.
-##' If slopes = FALSE, creates only lagged features (up to \code{lags-val} which equals 5).
+##' If slopes = FALSE, creates only lagged features (up to \code{lags_val} which equals 5).
 ##' If slopes = TRUE, creates slopes of the time tendencies over t and the past 3, 6, 9... days + adds feature value at time t
 ##' assumes that time column has points for all dates!!!
 ##'
 ##' @param df dataframe with ONE geo_value and ONE feature (which will be
 ##'   lagged), columns val, time
-##' @param lags Maximum number of past values to include in the data frame FOR
-##'   SLOPE CALCULATION.
+##' @param lags Maximum number of past values from which to calculate the SLOPE
+##'   feature, to include in the data frame.
 ##' @param name variable name that will be used for the lagged features
 ##' @param slopes if TRUE, returns a dataframe with slopes based on the past
 ##'   feature values and if FALSE, returs raw lagged features
@@ -50,7 +50,7 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
 
   ## if you want more lags than available points, returns empty dataframe
   len <- nrow(df)
-  if(len <= lags){
+  if(len <= max(lags, lags_val)){
     return(data.frame())
   }
 
@@ -63,24 +63,28 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
 
   out <- data.frame(time_value = timestamp[(lags+1):len])
   
-  ##########
-  if(!slopes){
-  ## adding lagged feature from t-0, t-1, t-2, until t-lags
-  for(i in 0:lags){
-    out <- suppressMessages(bind_cols(out, signal[(lags+1-i):(len-i)]))
+  ################################################################
+  ## adding lagged feature from t-0, t-1, t-2, until t-lags  #####
+  ################################################################
+  lags_val = 5
+  for(i in 0:lags_val){
+    out <- suppressMessages(bind_cols(out, signal[(lags_val+1-i):(len-i)]))
   }
-  names(out) = c("time_value", paste(name, "_lag", 0:lags, sep = ""))
-  }
+  names(out) = c("time_value", paste(name, "_lag", 0:lags_val, sep = ""))
+
+  #############################################
+  ## adding slopes feature every 3 points #####
+  #############################################
   if(slopes){
     npoints = lags+1
     nfeats = floor(npoints/3) ## 3 is a magic number. will construct a new feature (new slope) every 3 points
     limits_lm = round(seq(lags+1, 1, length.out = nfeats+1))
-    out[[paste(name, "_lag0", sep = "")]] = signal[(lags+1):(len)] ## also adds lag0 to the slopes feature matrix
+    ## out[[paste(name, "_lag0", sep = "")]] = signal[(lags+1):(len)] ## also adds lag0 to the slopes feature matrix
     for(j in 1:nfeats){
       aux <- rep(NA, nrow(out))
       row_pos <- 1
       for(i in (lags+1):(len)){
-        signal_vec <- signal[i:(limits_lm[j+1]+row_pos-1)]
+        signal_vec <- signal[i:(limits_lm[j+1]+row_pos-1)] %>% na.exclude() %>% as.numeric()
         if(any(is.na(signal_vec))){
           aux[row_pos] <- NA
         } else{
@@ -93,7 +97,6 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
     }
   }
   
-
   return(out)
 }
 
