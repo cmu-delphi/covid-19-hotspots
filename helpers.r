@@ -81,6 +81,16 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
       row_pos <- 1
       for(i in (lags+1):(len)){
         signal_vec <- signal[i:(limits_lm[j+1]+row_pos-1)]
+
+        ## ## Printing some things
+        ## print("j")
+        ## print(j)
+        ## print("i")
+        ## print(i)
+        ## print("signal_vec")
+        ## print(signal_vec)
+
+        if(all(is.na(signal_vec))) next
         x <- (1:length(signal_vec))
         aux[row_pos] <- coef(lm(signal_vec~x))[2]
         row_pos <- row_pos + 1
@@ -273,19 +283,20 @@ add_geoinfo <- function(df_all, geo_type){
 }
 
 
-##' outputs data ready for modeling, with all lagged features and binary
-##'    response uses output from API call
+##' Outputs data ready for modeling, with all lagged features and binary
+##'    response uses output from API call.
 ##'
 ##' @param mat resulted from the API call with all signals we want to use for
-##'   model construction
+##'   model construction.
 ##' @param lags number of past values to include in the data frame; for time t,
-##'   dataframe will have in one row X_t until X_{t-lag}
-##' @param n_ahead number of days ahead that response will be computed
-##' @param response name of the response variable in mat
+##'   dataframe will have in one row X_t until X_{t-lag}.
+##' @param n_ahead number of days ahead that response will be computed.
+##' @param response name of the response variable in mat.
 ##' @param fn_response logic for computing response, based on a provided
-##'   response vector whose all points will be used for this computation
-##' @param threshold threshold on increase val to determine hotspot
-##' @param slopes if TRUE, produces a dataframe with slopes based on the past feature values and if FALSE, produces raw lagged features
+##'   response vector whose all points will be used for this computation.
+##' @param threshold threshold on increase val to determine hotspot.
+##' @param slopes if TRUE, produces a dataframe with slopes based on the past
+##'   feature values and if FALSE, produces raw lagged features.
 ##' @param onset if TRUE, then hotspot is defined as the onset of
 ##'   increases. Otherwise, a hotspot is defined as an increasing trend,
 ##'   regardless of the past.
@@ -297,14 +308,16 @@ ready_to_model <- function(mat, lags, n_ahead,
                            threshold = .25,
                            onset = FALSE){
 
-  ## construct lagged features for all available signals, including lagged responses
+  ## Construct lagged features for all available signals, including lagged responses
   # TODO deal with potential NAs?
   features <- mat %>% plyr::ddply(c("signal", "data_source", "geo_value"),
                                   lagged_features_onegeo, lags = lags, slope = slope) %>% na.omit()
-  ## construct hotspot indicator in the resp variable
-  responses <- mat %>% filter(signal == response) %>% plyr::ddply(c("signal", "data_source", "geo_value"), response_onegeo,
-                                                                  n_ahead = n_ahead, fn_response = fn_response, threshold = threshold,
-                                                                  onset = onset) %>% na.omit()
+
+  ## Construct hotspot indicator in the resp variable
+  responses <- mat %>% filter(signal == response) %>%
+    plyr::ddply(c("signal", "data_source", "geo_value"), response_onegeo,
+                n_ahead = n_ahead, fn_response = fn_response, threshold = threshold,
+                onset = onset) %>% na.omit()
 
   ## transform the dataframe in a wide format, with one row per geo_value and date
   names_to_pivot <- colnames(features %>% select(-geo_value, -time_value, -signal, -data_source))
@@ -312,7 +325,8 @@ ready_to_model <- function(mat, lags, n_ahead,
                           values_from = all_of(names_to_pivot)) %>% ungroup
 
   ## join features and response
-  mat_to_model <- inner_join(features, responses %>% select(-signal, -data_source), by = c("geo_value", "time_value")) %>% na.omit()
+  mat_to_model <- inner_join(features, responses %>% select(-signal, -data_source),
+                             by = c("geo_value", "time_value")) %>% na.omit()
   return(mat_to_model)
 }
 

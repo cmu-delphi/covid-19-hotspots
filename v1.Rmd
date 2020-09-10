@@ -298,9 +298,9 @@ First, we download and form the data.
 ```{r form-data, eval=TRUE}
 ## Setup
 lags = 28
-n_ahead = 28
+n_ahead = 21 ## 28
 threshold = 0.25
-geo_type = "state" ## or "county"
+geo_type = "county" ## or "county"
 response = "confirmed_7dav_incidence_prop"
 fn_response = response_diff_avg_1week_min20
 fn_response_name = "response_diff_avg_1week_min20"
@@ -314,17 +314,21 @@ data_sources = c("indicator-combination",
 signals = c("confirmed_7dav_incidence_prop", 
             "smoothed_hh_cmnty_cli")
 start_day = as.Date("2020-05-01")
-end_day = as.Date("2020-08-10")
+end_day = as.Date("2020-08-30")
 signals = data.frame(data_sources = data_sources, signals = signals)
 suppressMessages({
   mat = covidcast_signals(signals,
                           start_day = start_day, end_day = end_day, geo_type = geo_type)
 })
-mat <- mat %>% select(geo_value, time_value, signal, data_source, value) 
+mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
 
 ## Form the y|X matrix
+source('helpers.r')
 df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
 df_model %>% names() %>% print()
+## save(df_model, mat, s, n_ahead, threshold, geo_type, response, fn_response, fn_response_name, slope, onset, split_type,
+##      file = file.path(outputdir, "data-county.Rdata"))
+## load(file = file.path(outputdir, "data-county.Rdata"))
 
 ## Further split into training and test
 geo_split_seed = 10
@@ -344,7 +348,7 @@ for(ifold in 1:nfold){
 
 Now, fit the hot-spot models and visualize the model performances.
 
-```{r make-plots, eval=TRUE}
+```{r make-plots, eval=FALSE}
 make_plots(destin = outputdir,
            splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope, split_type, onset, geo_cv_split_seed)
 ```
