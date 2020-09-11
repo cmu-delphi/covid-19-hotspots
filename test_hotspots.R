@@ -15,7 +15,7 @@ end_day <- as.Date("2020-09-04")
 
 test_that("check raw df", {
   expect_equal(names(mat), c("geo_value", "time_value", "signal", "data_source", "value"))
-  expect_equal(length(unique(mat$geo_value)), 52)
+  expect_equal(n_distinct(mat$geo_value), 52)
   expect_equal(min(mat$time_value), start_day)
   expect_equal(max(mat$time_value), end_day)
   expect_equal(any(is.na(mat)), FALSE)
