@@ -1,17 +1,27 @@
 setwd("C:/Users/dzhao/Documents/Carnegie Mellon 2018-2023/RESEARCH - Delphi/covid-19-hotspots")
 load("testdata_mat.RData")
 load("testdata_df_model.RData")
+load("testdata_splitted.RData")
+load(file=file.path("testdata_fit_lasso.Rdata"))
 source("helpers.r")
 library(testthat)
 
-lags <- 28
-geo_type <- "state"  # "county"
-response <- "confirmed_7dav_incidence_prop"
-fn_response <- response_diff_avg_1week_min20
-fn_response_name <- "response_diff_avg_1week_min20"
-start_day <- as.Date("2020-05-01")
-end_day <- as.Date("2020-09-04")
+lags = 28
+n_ahead = 21 ## 28
+threshold = 0.25
+geo_type = "state" ## or "county"
+response = "confirmed_7dav_incidence_prop"
+fn_response = response_diff_avg_1week_min20
+fn_response_name = "response_diff_avg_1week_min20"
+slope = TRUE
+onset = FALSE
+split_type = "geo"
 
+df_train = splitted$df_train
+df_test = splitted$df_test
+preds = predict(fit_lasso, s = "lambda.min",
+                newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)),
+                type = "response")[,1]
 
 test_that("check raw df", {
   expect_equal(names(mat), c("geo_value", "time_value", "signal", "data_source", "value"))
