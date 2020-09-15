@@ -1,0 +1,257 @@
+---
+title: Diagnosing stat-level model
+author: Justin, Natalia 
+date: Sep 14, 2020
+output:
+  html_document:
+    code_folding: show
+    toc: true
+    toc_float: true
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=TRUE, cache=TRUE,
+                      warning=FALSE, message=FALSE)
+library(ggplot2)
+library(covidcast)
+library(tidyverse)
+library(tidyr) ## for pivot_wider() ?
+library(devtools)
+library(glmnet)
+source("helpers.r")
+
+## Location of your covidcast R package.
+load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
+## load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast")
+
+## Location to print plots to
+outputdir = "./figures"
+```
+
+
+## Goal
+
+`v1.Rmd` outlined the various goals but the ROC curves look too good. Find what is wrong.
+
+## Obtain data
+
+Obtain state level data.
+
+```{r get-data}
+## Setup
+lags = 28
+n_ahead = 21 ## 28
+threshold = 0.25
+geo_type = "state" ## or "county"
+response = "confirmed_7dav_incidence_prop"
+fn_response = response_diff_avg_1week_min20
+fn_response_name = "response_diff_avg_1week_min20"
+slope = TRUE
+onset = FALSE
+split_type = "geo"
+
+## Read in data once
+data_sources = c("indicator-combination", 
+                 "fb-survey")
+signals = c("confirmed_7dav_incidence_prop", 
+            "smoothed_hh_cmnty_cli")
+start_day = as.Date("2020-05-01")
+end_day = as.Date("2020-08-30")
+signals = data.frame(data_sources = data_sources, signals = signals)
+suppressMessages({
+  mat = covidcast_signals(signals,
+                          start_day = start_day, end_day = end_day, geo_type = geo_type)
+})
+mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
+## save(mat, file=file.path(outputdir, "new-state-data.Rdata"))
+## load(file=file.path(outputdir, "new-state-data.Rdata"))
+
+## Form the y|X matrix
+df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
+df_model %>% names() %>% print()
+```
+
+## Main code
+
+This is the barebones code for doing logistic lasso prediction on state level
+data. The reader should double-check this code for any mistakes.
+
+```{r fit-model-and-produce-roc}
+## Now take one split
+geo_split_seed = 100
+geo_cv_split_seed = 10000
+source('helpers.r')
+splitted <- sample_split_geo(df_model, pct_test = 0.3, seed = geo_split_seed)
+
+## See the distribution of 1's and 0's
+df_model %>% select(resp) %>% table() %>% print()
+splitted$df_train %>% select(resp) %>% table() %>% print()
+splitted$df_test %>% select(resp) %>% table() %>% print()
+nfold = 5
+foldid <- make_foldid_geo(splitted$df_train, nfold = nfold, geo_cv_split_seed)
+for(ifold in 1:5){
+  splitted$df_train[which(foldid==ifold),] %>% select(resp) %>% table() %>% print()
+}
+
+## If you don't want FB features, do this:
+## df_train = splitted$df_train %>% select(geo_value, time_value, resp, contains(response))
+## df_test = splitted$df_test %>% select(geo_value, time_value, resp, contains(response))
+
+## If you DO want FB features, do this:
+df_train = splitted$df_train
+df_test = splitted$df_test
+
+## Main part of the lasso fitting and predicting
+fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
+                       y = df_train$resp,
+                       family = "binomial",
+                       alpha = 1,
+                       foldid = foldid,
+                       nfold = nfold)
+
+## See the fitted model
+coef(fit_lasso, s = "lambda.min") %>% print()
+
+## Obtain the predictions
+preds = predict(fit_lasso, s = "lambda.min",
+                newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)),
+                type = "response")[,1]
+
+## ## For comparison: the unregularized logistic regression.
+## preds = predict(glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
+##                        y = df_train$resp,
+##                        family = "binomial",
+##                        lambda = 0),
+##                 newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
+
+## See predictions against truth
+predictions <- df_test %>% select(geo_value, time_value, resp) ## these are the real 
+real_labels = predictions %>% select(resp) %>% unlist()
+metrics <- lapply(seq(0, 1, 0.001), function(cutoff){
+  logreg_preds = (preds > cutoff)
+  return(c(cutoff = cutoff,
+           fpr = sum((real_labels==1) & (logreg_preds==1)) / sum((real_labels==1)),
+           fnr = sum((real_labels==0) & (logreg_preds==1)) / sum((real_labels==0))))
+})
+metrics <- do.call(rbind, metrics) %>% as_tibble()
+plot(NA, ylim=c(0,1), xlim=c(0,1))
+abline(v=seq(from=0,to=1, by = 0.05), col='grey')
+abline(h=seq(from=0,to=1, by = 0.05), col='grey')
+lines(metrics$fpr ~ metrics$fnr, type='l', lwd=2)
+
+preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1, geo_cv_split_seed = geo_cv_split_seed )
+predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+```
+
+The ROC curve is suspiciously good; the area under the curve (AUC) is above 0.99.
+
+(Several people checked the code (Alex & Natalia) and confirmed that there is no
+spillover between training or test, or any other bug in the code.)
+
+## Performance after "erasing" features
+
+Here's an interesting experiment. Let's take the 30 training features, take a
+random `n` sized subset of them, and scramble the values i.e. erase the signal
+in them. The resulting ROC curve's AUC would quantify the **hotspot model
+performance with only a random subset of features**.
+
+Varying `n` between 
+
+* 5 (25 valid features), and
+
+* 30 (no valid features, all scrambled),
+
+we can see that the AUC is quite high even after getting rid of the majority of
+features. When we get scramble 25, so we are only using *a random subset of 5
+features*, the average AUC is still higher than 95\%!
+
+```{r scramble}
+source('diagnostics.r')
+nsim = 10
+nnlist = c(5, 10, 15, 20, 25, 28, 29, 30)
+auclist = parallel::mclapply(nnlist, function(nn){
+  aucs = sapply(1:nsim, function(isim) scramble_some_training_columns(nn, splitted$df_train, splitted$df_test, foldid))
+}, mc.cores = 8)
+```
+
+```{r scramble-plot, fig.width=5 ,fig.height=5}
+aucmat = do.call(rbind, auclist)
+matplot(x=nnlist, y=aucmat, type='p', pch=16, col='grey',
+        xlab = "Number of features scrambled (out of 30)",
+        ylab = "AUC", ylim = c(0,1))
+abline(h=seq(from=0, to = 1, by = 0.05), col='grey80', lwd=1, lty=2)
+abline(v=nnlist, col='grey80', lwd=1, lty=2)
+lines(x=nnlist,
+      y=sapply(auclist, mean), col='red', lwd=5)
+legend("bottomleft", col=c('grey', 'red'), lwd=c(NA,5),
+       pch = c(16, NA),
+       legend=c("Individual AUC", "Average AUC"))
+```
+
+## Diagnostics
+
+The predicted probabilities are concentrated near 0 and 1.
+
+```{r diagnostics-1, fig.width=5, fig.height=5}
+hist(preds, col='grey80', main="Logistic regression predicted probabilities")
+```
+
+The predictions are great:
+
+```{r diagnostics-2, fig.width=5, fig.height=5}
+testmat = cbind(preds=preds, resp= df_test$resp) %>% as_tibble()
+res = list("0" = testmat %>% subset(resp==0) %>% select(preds) %>% unlist(),
+           "1" = testmat %>% subset(resp==1) %>% select(preds) %>% unlist())
+boxplot(res, xlab = "Test Labels\n(Hotspots are 1's)",
+        ylab = "Predicted prob.",
+        main = "Test set performance")
+```
+
+
+Let's see predicted probabilities (thick green lines) overlaid with the JHU case
+counts (red points are hot spots).
+
+```{r diagnostics-3, fig.width=8, fig.height=12, echo=FALSE}
+res = cbind(df_test %>% select(geo_value, time_value, resp, val=contains("lag0_smoothed_hh")), preds)
+par(mfrow=c(5, 3))
+par(mar=c(3,4,1,1))
+one_geo_diagnose <- function(df,...){
+  plot(y=df$val, x=df$time_value, type='o',
+       col=df$resp+1, pch=16,ylim=c(0,50),
+       xlab = "Time",
+       ylab="JHU Household \n Case Proportions")
+  abline(h=seq(from=0,to=200, by=5), col='grey80', lty=2)
+  thisgeo = df$geo_value %>% unlist() %>% unique()%>%toupper()
+  legend("topleft", legend = thisgeo, bty="n", cex=2)
+  lines(x=df$time_value, y=df$preds*10, col='green', lwd=2)
+  if(thisgeo=="AZ") legend("topright", lwd=2, col='green', legend="Predicted prob (times 10)")
+  return()
+}
+res %>%
+  group_by(geo_value) %>%
+  group_map(one_geo_diagnose, keep=TRUE) -> dummy_obj
+```
+
+## Tentative conclusions
+
+TLDR; Splitting by geo level makes the problem too easy, and only a few
+**random** features can also do pretty well in this setting.
+
+* Before, when we were splitting CV folds by consecutive time blocks before; now
+  we are splitting by geo values (states).
+
+* Now, we are aligning our CV scheme to be the same as our training/test split
+  scheme (all by geo).
+
+* We might be making the task too easy for ourselves, because we can see future
+  time points in other states when training.
+
+* It's possible that if we know full trajectories from some states, predicting
+  rises in other states is an easy task.
+
+* Put differently, it's possible that our "out-of-geo" performance looks good
+  now, but when we look to predict new rises in the future, we won't have access
+  to other states' full data trajectories, and we won't be able to detect
+  hotspots well. It's more likely that all the rises will be happening together.
+
+
