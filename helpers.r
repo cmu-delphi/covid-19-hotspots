@@ -50,6 +50,7 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
 
   ## if you want more lags than available points, returns empty dataframe
   len <- nrow(df)
+  lags_val = 5
   if(len <= max(lags, lags_val)){
     return(data.frame())
   }
@@ -61,14 +62,15 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
   ## I think it's reasonable to interpolate the TS as long as there are not many sequential missing obs
   ## low priority
 
-  out <- data.frame(time_value = timestamp[(lags+1):len])
+  out <- data.frame(time_value = timestamp[(lags_val+1):len])
   
   ################################################################
   ## adding lagged feature from t-0, t-1, t-2, until t-lags  #####
   ################################################################
   lags_val = 5
   for(i in 0:lags_val){
-    out <- suppressMessages(bind_cols(out, signal[(lags_val+1-i):(len-i)]))
+    inds = (lags_val+1-i):(len-i)
+    out <- suppressMessages(bind_cols(out, signal[inds]))
   }
   names(out) = c("time_value", paste(name, "_lag", 0:lags_val, sep = ""))
 
@@ -352,10 +354,15 @@ sample_split_geo <- function(df_model, pct_test = 0.3, seed=0){
   geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
   set.seed(seed)
   test_ind =  sample(length(geos), length(geos) * pct_test)
+  print(test_ind)
   test_geos = geos[test_ind]
   train_geos = geos[-test_ind]
   df_test <- df_model %>% filter(geo_value %in% test_geos)
   df_train <- df_model %>% filter(geo_value %in% train_geos)
+
+  stopifnot(intersect(
+      df_test %>% select(geo_value) %>% unique() %>% unlist(),
+      df_train %>% select(geo_value) %>% unique() %>% unlist()) %>% length() == 0)
 
   ## Todo: check if train and test have equal number of hot spots. Doesn't seem
   ## to be a big problem since we are naively splitting geos, but still..
