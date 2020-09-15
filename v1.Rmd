@@ -40,8 +40,7 @@ SVM, xgboost), for a hotspot detection model.
 **Data** Between 2020-05-01 and 2020-08-25, take the 
 
 - 7-day JHU case proportion (incidence rate),
-- Various FB surveys (smoothed individual, smoothed community survey,
-  smoothed household survey, smoothed weighted household survey).  
+- **One of the** FB surveys (smoothed household survey).
 	 
 Then, form a covariate matrix by time-lagging these by 0 through 28
 days. Additionally, add features by calculating "slopes of JHU IR from the past
@@ -281,7 +280,7 @@ First, we download and form the data.
 lags = 28
 n_ahead = 21 ## 28
 threshold = 0.25
-geo_type = "county" ## or "county"
+geo_type = "state" ## or "county"
 response = "confirmed_7dav_incidence_prop"
 fn_response = response_diff_avg_1week_min20
 fn_response_name = "response_diff_avg_1week_min20"
@@ -315,8 +314,8 @@ df_model %>% names() %>% print()
 ## load(file = file.path(outputdir, "data-county.Rdata"))
 
 ## Further split into training and test
-geo_split_seed = 10
-geo_cv_split_seed = 100
+geo_split_seed = 100
+geo_cv_split_seed = 10000
 splitted <- sample_split_geo(df_model, pct_test = 0.3, seed = geo_split_seed)
 
 ## See the distribution of 1's and 0's
@@ -340,13 +339,16 @@ make_plots(destin = outputdir,
 Also visualize the 1's and 0's in the state level data (highlighting by each CV
 fold *and* test data, in different color boxes):
 
-```{r viz-response, eval=FALSE}
+```{r viz-response, eval=TRUE, fig.width=10, fig.height=30}
 ## geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
-foldid <- make_foldid_geo(splitted$df_train, nfold = 5, seed = geo_cv_split_seed)
+geo_split_seed = 100
+geo_cv_split_seed = 10000
+nfold = 5 
+foldid <- make_foldid_geo(splitted$df_train, nfold = nfold, seed = geo_cv_split_seed)
 state_splits = lapply(1:nfold, function(ifold)
   splitted$df_train[which(foldid==ifold),] %>% select(geo_value) %>% unlist() %>% unique())
-nn1 = 7
-nn2 = 8
+nn1 = 14
+nn2 = 4
 par(mfrow = c(nn1, nn2)); par(mar = c(3, 3, 1, 1)); par(cex=.7)
 ## iilist = 1:length(geos)
 geos = lapply(1:nfold, function(ifold){
@@ -381,6 +383,6 @@ for(geo in geos){
     box(lty=1, col=splitnum + 1, lwd=3)
   }
   legend("topright", legend = paste0("\nfold ", splitnum),
-         bty="n", cex=2)
+         bty="n", cex=2) 
 }
 ```
