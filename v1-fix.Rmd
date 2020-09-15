@@ -31,7 +31,8 @@ outputdir = "./figures"
 
 ## Goal
 
-`v1.Rmd` outlined the various goals but the ROC curves look too good. Find what is wrong.
+Double-check the analysis in`v1.Rmd`, which produce ROC curves that seem too
+good to be true.
 
 ## Obtain data
 
@@ -161,9 +162,9 @@ Varying `n` between
 
 * 30 (no valid features, all scrambled),
 
-we can see that the AUC is quite high even after getting rid of the majority of
-features. When we get scramble 25, so we are only using *a random subset of 5
-features*, the average AUC is still higher than 95\%!
+we can see that the AUC is quite high even after getting rid of a majority of
+features. When we scramble 25 of the 30 features, so we are only using *a random
+subset of 5 features*, the average AUC is still higher than 95\%!
 
 ```{r scramble}
 source('diagnostics.r')

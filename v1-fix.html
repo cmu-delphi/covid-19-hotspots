@@ -274,7 +274,7 @@ div.tocify {
 
 <div id="goal" class="section level2">
 <h2>Goal</h2>
-<p><code>v1.Rmd</code> outlined the various goals but the ROC curves look too good. Find what is wrong.</p>
+<p>Double-check the analysis in<code>v1.Rmd</code>, which produce ROC curves that seem too good to be true.</p>
 </div>
 <div id="obtain-data" class="section level2">
 <h2>Obtain data</h2>
@@ -477,7 +477,7 @@ predictions[[paste(&quot;lasso_lags&quot;, lags, &quot;_nahead&quot;, n_ahead, s
 <li><p>5 (25 valid features), and</p></li>
 <li><p>30 (no valid features, all scrambled),</p></li>
 </ul>
-<p>we can see that the AUC is quite high even after getting rid of the majority of features. When we get scramble 25, so we are only using <em>a random subset of 5 features</em>, the average AUC is still higher than 95%!</p>
+<p>we can see that the AUC is quite high even after getting rid of a majority of features. When we scramble 25 of the 30 features, so we are only using <em>a random subset of 5 features</em>, the average AUC is still higher than 95%!</p>
 <pre class="r"><code>source('diagnostics.r')
 nsim = 10
 nnlist = c(5, 10, 15, 20, 25, 28, 29, 30)
