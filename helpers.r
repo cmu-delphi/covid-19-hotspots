@@ -41,7 +41,7 @@ add_NAval_missing_dates <- function(df){
 ##' @param slopes if TRUE, returns a dataframe with slopes based on the past
 ##'   feature values and if FALSE, returs raw lagged features
 ##' @return dataframe with lagged features for one geo_value OR slopes
-lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
+lagged_features_onegeo <- function(df, lags, lags_val = 5, name = "feature",slopes = FALSE){
 
   ## The fixed number of time lags for the data values themselves.
   df <- df %>% arrange(time_value)
@@ -66,7 +66,7 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
   ################################################################
   ## adding lagged feature from t-0, t-1, t-2, until t-lags  #####
   ################################################################
-  lags_val = 5
+  #lags_val = 5
   for(i in 0:lags_val){
     out <- suppressMessages(bind_cols(out, signal[(lags_val+1-i):(len-i)]))
   }
