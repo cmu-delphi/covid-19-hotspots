@@ -42,6 +42,8 @@ add_NAval_missing_dates <- function(df){
 ##'   feature values and if FALSE, returs raw lagged features
 ##' @return dataframe with lagged features for one geo_value OR slopes
 lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
+  ## Basic checks
+  stopifnot(length(lags) == 1 & lags >= 1)
 
   ## The fixed number of time lags for the data values themselves.
   df <- df %>% arrange(time_value)
@@ -78,30 +80,55 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
   ## adding slopes feature every 3 points #####
   #############################################
   if(slopes){
-    npoints = lags+1
-    nfeats = floor(npoints/3) ## 3 is a magic number. will construct a new feature (new slope) every 3 points
-    
-    ## changes from here forward
-    ##################
-    limits_lm = round(seq(1, lags+1, length.out = nfeats+1))[-1]
-    ## out[[paste(name, "_lag0", sep = "")]] = signal[(lags+1):(len)] ## also adds lag0 to the slopes feature matrix
-    for(j in 1:nfeats){
-      aux <- rep(NA, nrow(out))
-      for(i in (lags+1):(len)){
-        signal_vec <- signal[(i-limits_lm[j]):i] %>% na.exclude() %>% as.numeric()
-        if(any(is.na(signal_vec))){
-          aux[i] <- NA
-        } else{
-          x <- (1:length(signal_vec))
-          aux[i] <- .lm.fit(cbind(1,x), signal_vec)$coef[2] ## MUCH faster version than lm()
-        }
-      }
-      out[[paste(name, "_slope", limits_lm[j], sep = "")]] <- aux
+    how_far_back = seq(min(lags, 3), lags, by = 3)
+    for(nback in how_far_back){
+      onevar = make_slope_var(signal, nback)
+      stopifnot(length(onevar) == nrow(out))
+      out[[paste(name, "_slope", nback, sep = "")]] <- onevar
     }
   }
-  
   return(out)
 }
+
+##' Calculate slope variable, looking back \code{nback} days.
+##'
+##' @param signal Data.
+##' @param nback How far back to go when calculating slope. For example,
+##'   \code{nback=3} means calculate the slope between indices (t, t-1, .. t-3),
+##'   for all possible \code{t} i.e. \code{t} in \code{(4:len)}. All other
+##'   entries are NA.
+##'
+##' @param return A vector containing slopes calculated from today through
+##'   \code{nback} days.
+make_slope_var <- function(signal, nback){
+  n = length(signal)
+  aux <- rep(NA, n)
+  endpts = (nback+1):(n)
+  for(endpt in endpts){
+    aux[endpt] <- get_slope(endpt + (-nback):0, signal)
+  }
+  return(aux)
+}
+
+##' Get the slope of \code{signal[inds]}.
+##'
+##' @param inds Indices.
+##' @param signal Data.
+##'
+##' @return The slope of a OLS linear regression on \code{signal[inds]}.
+##'
+get_slope <- function(inds, signal){
+  stopifnot(all(inds %in% 1:length(signal)))
+  signal_vec <- signal[inds] %>% na.exclude() %>% as.numeric()
+  if(any(is.na(signal_vec))){
+    slp = NA
+  } else {
+    x <- (1:length(signal_vec))
+    slp = .lm.fit(cbind(1,x), signal_vec)$coef[2] ## MUCH faster version than lm()
+  }
+  return(slp)
+}
+
 
 ##' constructs response variable for one geo_value using the provided function
 ##'
