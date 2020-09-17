@@ -355,7 +355,6 @@ sample_split_geo <- function(df_model, pct_test = 0.3, seed=0){
   geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
   set.seed(seed)
   test_ind =  sample(length(geos), length(geos) * pct_test)
-  print(test_ind)
   test_geos = geos[test_ind]
   train_geos = geos[-test_ind]
   df_test <- df_model %>% filter(geo_value %in% test_geos)

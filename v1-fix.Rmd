@@ -21,8 +21,8 @@ library(glmnet)
 source("helpers.r")
 
 ## Location of your covidcast R package.
-##load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
-load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast")
+## load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
+ load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast")
 
 ## Location to print plots to
 outputdir = "./figures"
@@ -31,7 +31,12 @@ outputdir = "./figures"
 
 ## Goal
 
-`v1.Rmd` outlined the various goals but the ROC curves look too good. Find what is wrong.
+Double-check the analysis in`v1.Rmd`, which produce ROC curves that seem too
+good to be true.
+
+## Obtain data
+
+Obtain state level data.
 
 ```{r get-data}
 ## Setup
@@ -44,8 +49,6 @@ fn_response = response_diff_avg_1week_min20
 fn_response_name = "response_diff_avg_1week_min20"
 slope = TRUE
 onset = FALSE
-split_type = "geo"
-#split_type = "time"
 
 ## Read in data once
 data_sources = c("indicator-combination", 
@@ -68,13 +71,18 @@ df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, thr
 df_model %>% names() %>% print()
 ```
 
+## Main code
+
+This is the barebones code for doing logistic lasso prediction on state level
+data. The reader should double-check this code for any mistakes.
+
+
 ```{r fit-model-and-produce-roc}
 ## Now take one split
 geo_split_seed = 100
 geo_cv_split_seed = 10000
 source('helpers.r')
 splitted <- sample_split_geo(df_model, pct_test = 0.3, seed = geo_split_seed)
-#splitted <- sample_split_date(df_model, .3)
 
 ## See the distribution of 1's and 0's
 df_model %>% select(resp) %>% table() %>% print()
@@ -82,11 +90,9 @@ splitted$df_train %>% select(resp) %>% table() %>% print()
 splitted$df_test %>% select(resp) %>% table() %>% print()
 nfold = 5
 foldid <- make_foldid_geo(splitted$df_train, nfold = nfold, geo_cv_split_seed)
-#foldid <- make_foldid(splitted$df_train, nfold = nfold)
 for(ifold in 1:5){
   splitted$df_train[which(foldid==ifold),] %>% select(resp) %>% table() %>% print()
 }
-
 
 ## If you don't want FB features, do this:
 ## df_train = splitted$df_train %>% select(geo_value, time_value, resp, contains(response))
@@ -95,30 +101,6 @@ for(ifold in 1:5){
 ## If you DO want FB features, do this:
 df_train = splitted$df_train
 df_test = splitted$df_test
-
-## ## Split_by_geo (the actual code in \code{make_foldid_geo()})
-## x = df_train
-## geos = x %>% select(geo_value) %>% unlist()
-## unique_geos = geos %>% unique() %>% sort()
-## set.seed(seed)
-## geo_blocks = split(sample(unique_geos),
-##                    sort(1:length(unique_geos) %% nfold))
-## cv_inds = lapply(1:nfold, function(ifold){
-##   which(geos %in% geo_blocks[[ifold]])
-## })
-
-## final_inds = rep(NA, length(geos))
-## for(ifold in 1:nfold){
-##   inds = cv_inds[[ifold]]
-##   final_inds[inds] = ifold
-## }
-
-## for(ifold in 1:nfold){
-##   stopifnot(all((x[which(final_inds==ifold),] %>%
-##                  select(geo_value) %>%
-##                  unique() %>% unlist()) %in% geo_blocks[[ifold]]))
-## }
-## foldid = final_inds
 
 ## Main part of the lasso fitting and predicting
 fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
@@ -131,6 +113,7 @@ fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value
 ## See the fitted model
 coef(fit_lasso, s = "lambda.min") %>% print()
 
+
 boxplot(df_train$`feature_slope29_confirmed_7dav_incidence_prop_indicator-combination`~df_train$resp)
 boxplot(df_test$`feature_slope29_confirmed_7dav_incidence_prop_indicator-combination`~df_test$resp)
 ggplot(df_train, aes(x = time_value, y = `feature_slope29_confirmed_7dav_incidence_prop_indicator-combination`)) + 
@@ -138,6 +121,7 @@ ggplot(df_train, aes(x = time_value, y = `feature_slope29_confirmed_7dav_inciden
   geom_line(aes(y = `feature_lag0_confirmed_7dav_incidence_prop_indicator-combination`/10)) +
   scale_y_continuous(sec.axis = sec_axis(~./10))+
   facet_wrap(~geo_value)
+
 
 ## Obtain the predictions
 preds = predict(fit_lasso, s = "lambda.min",
@@ -150,7 +134,6 @@ preds = predict(fit_lasso, s = "lambda.min",
 ##                        family = "binomial",
 ##                        lambda = 0),
 ##                 newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
-
 
 one_after_0 <- function(vec, n = 1){
   out <- rep(NA, length(vec))
@@ -186,15 +169,11 @@ abline(v=seq(from=0,to=1, by = 0.05), col='grey')
 abline(h=seq(from=0,to=1, by = 0.05), col='grey')
 lines(metrics$fpr ~ metrics$fnr, type='l', lwd=2)
 
-## See 
 preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1, geo_cv_split_seed = geo_cv_split_seed )
 predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
 ```
 
 ## Diagnostics
-
-Some diagnostics plots now:
-
 
 The predicted probabilities are concentrated near 0 and 1.
 
@@ -202,18 +181,35 @@ The predicted probabilities are concentrated near 0 and 1.
 hist(preds, col='grey80', main="Logistic regression predicted probabilities")
 ```
 
-```{r diagnostics-2, fig.width=10, fig.height=15, echo=FALSE}
+The predictions are great:
+
+```{r diagnostics-2, fig.width=5, fig.height=5}
+testmat = cbind(preds=preds, resp= df_test$resp) %>% as_tibble()
+res = list("0" = testmat %>% subset(resp==0) %>% select(preds) %>% unlist(),
+           "1" = testmat %>% subset(resp==1) %>% select(preds) %>% unlist())
+boxplot(res, xlab = "Test Labels\n(Hotspots are 1's)",
+        ylab = "Predicted prob.",
+        main = "Test set performance")
+```
+
+
+Let's see predicted probabilities (thick green lines) overlaid with the JHU case
+counts (red points are hot spots).
+
+```{r diagnostics-3, fig.width=8, fig.height=12, echo=FALSE}
 res = cbind(df_test %>% select(geo_value, time_value, resp, val=contains("lag0_smoothed_hh")), preds)
 par(mfrow=c(5, 3))
+par(mar=c(3,4,1,1))
 one_geo_diagnose <- function(df,...){
   plot(y=df$val, x=df$time_value, type='o',
        col=df$resp+1, pch=16,ylim=c(0,50),
        xlab = "Time",
-       ylab="JHU Household Case Proportions")
+       ylab="JHU Household \n Case Proportions")
   abline(h=seq(from=0,to=200, by=5), col='grey80', lty=2)
-  legend("topleft", legend=df$geo_value %>% unlist() %>% unique()%>%toupper(), bty="n", cex=2)
+  thisgeo = df$geo_value %>% unlist() %>% unique()%>%toupper()
+  legend("topleft", legend = thisgeo, bty="n", cex=2)
   lines(x=df$time_value, y=df$preds*10, col='green', lwd=2)
-  legend("topright", lwd=2, col='green', legend="Predicted prob (times 10)")
+  if(thisgeo=="AZ") legend("topright", lwd=2, col='green', legend="Predicted prob (times 10)")
   return()
 }
 res %>%
@@ -221,3 +217,24 @@ res %>%
   group_map(one_geo_diagnose, keep=TRUE) -> dummy_obj
 ```
 
+## Tentative conclusions
+
+TLDR; Splitting by geo level makes the problem too easy, and only a few
+**random** features can also do pretty well in this setting.
+
+* Before, when we were splitting CV folds by consecutive time blocks before; now
+  we are splitting by geo values (states).
+
+* Now, we are aligning our CV scheme to be the same as our training/test split
+  scheme (all by geo).
+
+* We might be making the task too easy for ourselves, because we can see future
+  time points in other states when training.
+
+* It's possible that if we know full trajectories from some states, predicting
+  rises in other states is an easy task.
+
+* Put differently, it's possible that our "out-of-geo" performance looks good
+  now, but when we look to predict new rises in the future, we won't have access
+  to other states' full data trajectories, and we won't be able to detect
+  hotspots well. It's more likely that all the rises will be happening together.
