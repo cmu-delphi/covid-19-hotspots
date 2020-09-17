@@ -62,15 +62,15 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
   ## I think it's reasonable to interpolate the TS as long as there are not many sequential missing obs
   ## low priority
 
-  out <- data.frame(time_value = timestamp[(lags_val+1):len])
+  out <- data.frame(time_value = timestamp)
   
   ################################################################
   ## adding lagged feature from t-0, t-1, t-2, until t-lags  #####
   ################################################################
   lags_val = 5
   for(i in 0:lags_val){
-    inds = (lags_val+1-i):(len-i)
-    out <- suppressMessages(bind_cols(out, signal[inds]))
+    inds = 1:(len-i)
+    out <- suppressMessages(bind_cols(out, c(rep(NA,i), signal[inds])))
   }
   names(out) = c("time_value", paste(name, "_lag", 0:lags_val, sep = ""))
 
@@ -80,22 +80,23 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
   if(slopes){
     npoints = lags+1
     nfeats = floor(npoints/3) ## 3 is a magic number. will construct a new feature (new slope) every 3 points
-    limits_lm = round(seq(lags+1, 1, length.out = nfeats+1))
+    
+    ## changes from here forward
+    ##################
+    limits_lm = round(seq(1, lags+1, length.out = nfeats+1))[-1]
     ## out[[paste(name, "_lag0", sep = "")]] = signal[(lags+1):(len)] ## also adds lag0 to the slopes feature matrix
     for(j in 1:nfeats){
       aux <- rep(NA, nrow(out))
-      row_pos <- 1
       for(i in (lags+1):(len)){
-        signal_vec <- signal[i:(limits_lm[j+1]+row_pos-1)] %>% na.exclude() %>% as.numeric()
+        signal_vec <- signal[(i-limits_lm[j]):i] %>% na.exclude() %>% as.numeric()
         if(any(is.na(signal_vec))){
-          aux[row_pos] <- NA
+          aux[i] <- NA
         } else{
           x <- (1:length(signal_vec))
-          aux[row_pos] <- .lm.fit(cbind(1,x), signal_vec)$coef[2] ## MUCH faster version than lm()
+          aux[i] <- .lm.fit(cbind(1,x), signal_vec)$coef[2] ## MUCH faster version than lm()
         }
-        row_pos <- row_pos + 1
       }
-      out[[paste(name, "_slope", j, sep = "")]] <- aux
+      out[[paste(name, "_slope", limits_lm[j], sep = "")]] <- aux
     }
   }
   

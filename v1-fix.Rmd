@@ -1,0 +1,223 @@
+---
+title: Diagnosing stat-level model
+author: Justin, Natalia 
+date: Sep 14, 2020
+output:
+  html_document:
+    code_folding: show
+    toc: true
+    toc_float: true
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=TRUE, cache=TRUE,
+                      warning=FALSE, message=FALSE)
+library(ggplot2)
+library(covidcast)
+library(tidyverse)
+library(tidyr) ## for pivot_wider() ?
+library(devtools)
+library(glmnet)
+source("helpers.r")
+
+## Location of your covidcast R package.
+##load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
+load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast")
+
+## Location to print plots to
+outputdir = "./figures"
+```
+
+
+## Goal
+
+`v1.Rmd` outlined the various goals but the ROC curves look too good. Find what is wrong.
+
+```{r get-data}
+## Setup
+lags = 28
+n_ahead = 21 ## 28
+threshold = 0.25
+geo_type = "state" ## or "county"
+response = "confirmed_7dav_incidence_prop"
+fn_response = response_diff_avg_1week_min20
+fn_response_name = "response_diff_avg_1week_min20"
+slope = TRUE
+onset = FALSE
+split_type = "geo"
+#split_type = "time"
+
+## Read in data once
+data_sources = c("indicator-combination", 
+                 "fb-survey")
+signals = c("confirmed_7dav_incidence_prop", 
+            "smoothed_hh_cmnty_cli")
+start_day = as.Date("2020-05-01")
+end_day = as.Date("2020-08-30")
+signals = data.frame(data_sources = data_sources, signals = signals)
+suppressMessages({
+  mat = covidcast_signals(signals,
+                          start_day = start_day, end_day = end_day, geo_type = geo_type)
+})
+mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
+## save(mat, file=file.path(outputdir, "new-state-data.Rdata"))
+## load(file=file.path(outputdir, "new-state-data.Rdata"))
+
+## Form the y|X matrix
+df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
+df_model %>% names() %>% print()
+```
+
+```{r fit-model-and-produce-roc}
+## Now take one split
+geo_split_seed = 100
+geo_cv_split_seed = 10000
+source('helpers.r')
+splitted <- sample_split_geo(df_model, pct_test = 0.3, seed = geo_split_seed)
+#splitted <- sample_split_date(df_model, .3)
+
+## See the distribution of 1's and 0's
+df_model %>% select(resp) %>% table() %>% print()
+splitted$df_train %>% select(resp) %>% table() %>% print()
+splitted$df_test %>% select(resp) %>% table() %>% print()
+nfold = 5
+foldid <- make_foldid_geo(splitted$df_train, nfold = nfold, geo_cv_split_seed)
+#foldid <- make_foldid(splitted$df_train, nfold = nfold)
+for(ifold in 1:5){
+  splitted$df_train[which(foldid==ifold),] %>% select(resp) %>% table() %>% print()
+}
+
+
+## If you don't want FB features, do this:
+## df_train = splitted$df_train %>% select(geo_value, time_value, resp, contains(response))
+## df_test = splitted$df_test %>% select(geo_value, time_value, resp, contains(response))
+
+## If you DO want FB features, do this:
+df_train = splitted$df_train
+df_test = splitted$df_test
+
+## ## Split_by_geo (the actual code in \code{make_foldid_geo()})
+## x = df_train
+## geos = x %>% select(geo_value) %>% unlist()
+## unique_geos = geos %>% unique() %>% sort()
+## set.seed(seed)
+## geo_blocks = split(sample(unique_geos),
+##                    sort(1:length(unique_geos) %% nfold))
+## cv_inds = lapply(1:nfold, function(ifold){
+##   which(geos %in% geo_blocks[[ifold]])
+## })
+
+## final_inds = rep(NA, length(geos))
+## for(ifold in 1:nfold){
+##   inds = cv_inds[[ifold]]
+##   final_inds[inds] = ifold
+## }
+
+## for(ifold in 1:nfold){
+##   stopifnot(all((x[which(final_inds==ifold),] %>%
+##                  select(geo_value) %>%
+##                  unique() %>% unlist()) %in% geo_blocks[[ifold]]))
+## }
+## foldid = final_inds
+
+## Main part of the lasso fitting and predicting
+fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
+                       y = df_train$resp,
+                       family = "binomial",
+                       alpha = 1,
+                       foldid = foldid,
+                       nfold = nfold)
+
+## See the fitted model
+coef(fit_lasso, s = "lambda.min") %>% print()
+
+boxplot(df_train$`feature_slope29_confirmed_7dav_incidence_prop_indicator-combination`~df_train$resp)
+boxplot(df_test$`feature_slope29_confirmed_7dav_incidence_prop_indicator-combination`~df_test$resp)
+ggplot(df_train, aes(x = time_value, y = `feature_slope29_confirmed_7dav_incidence_prop_indicator-combination`)) + 
+  geom_line(col = 'red') + 
+  geom_line(aes(y = `feature_lag0_confirmed_7dav_incidence_prop_indicator-combination`/10)) +
+  scale_y_continuous(sec.axis = sec_axis(~./10))+
+  facet_wrap(~geo_value)
+
+## Obtain the predictions
+preds = predict(fit_lasso, s = "lambda.min",
+                newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)),
+                type = "response")[,1]
+
+## ## For comparison: the unregularized logistic regression.
+## preds = predict(glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
+##                        y = df_train$resp,
+##                        family = "binomial",
+##                        lambda = 0),
+##                 newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
+
+
+one_after_0 <- function(vec, n = 1){
+  out <- rep(NA, length(vec))
+  out[1:n] <- "black"
+  for(i in (1+n):length(vec)){
+    out[i] <- ifelse(all(vec[(i-n):(i-1)] == 0) && (vec[i] == 1), "red", "black")
+  }
+  return(out)
+}
+
+df_aux <- df_test %>% select(geo_value, time_value, resp)
+df_aux$pred = preds
+df_aux <- plyr::ddply(df_aux, "geo_value", function(df_temp){
+  df_temp$color = one_after_0(df_temp$resp)
+  return(df_temp)
+})
+ggplot(df_aux, aes(x = factor(resp), y = pred)) + geom_boxplot() + theme_minimal() + geom_jitter(color = df_aux$color)
+
+
+
+## See predictions against truth
+predictions <- df_test %>% select(geo_value, time_value, resp) ## these are the real 
+real_labels = predictions %>% select(resp) %>% unlist()
+metrics <- lapply(seq(0, 1, 0.001), function(cutoff){
+  logreg_preds = (preds > cutoff)
+  return(c(cutoff = cutoff,
+           fpr = sum((real_labels==1) & (logreg_preds==1)) / sum((real_labels==1)),
+           fnr = sum((real_labels==0) & (logreg_preds==1)) / sum((real_labels==0))))
+})
+metrics <- do.call(rbind, metrics) %>% as_tibble()
+plot(NA, ylim=c(0,1), xlim=c(0,1))
+abline(v=seq(from=0,to=1, by = 0.05), col='grey')
+abline(h=seq(from=0,to=1, by = 0.05), col='grey')
+lines(metrics$fpr ~ metrics$fnr, type='l', lwd=2)
+
+## See 
+preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1, geo_cv_split_seed = geo_cv_split_seed )
+predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+```
+
+## Diagnostics
+
+Some diagnostics plots now:
+
+
+The predicted probabilities are concentrated near 0 and 1.
+
+```{r diagnostics-1, fig.width=5, fig.height=5}
+hist(preds, col='grey80', main="Logistic regression predicted probabilities")
+```
+
+```{r diagnostics-2, fig.width=10, fig.height=15, echo=FALSE}
+res = cbind(df_test %>% select(geo_value, time_value, resp, val=contains("lag0_smoothed_hh")), preds)
+par(mfrow=c(5, 3))
+one_geo_diagnose <- function(df,...){
+  plot(y=df$val, x=df$time_value, type='o',
+       col=df$resp+1, pch=16,ylim=c(0,50),
+       xlab = "Time",
+       ylab="JHU Household Case Proportions")
+  abline(h=seq(from=0,to=200, by=5), col='grey80', lty=2)
+  legend("topleft", legend=df$geo_value %>% unlist() %>% unique()%>%toupper(), bty="n", cex=2)
+  lines(x=df$time_value, y=df$preds*10, col='green', lwd=2)
+  legend("topright", lwd=2, col='green', legend="Predicted prob (times 10)")
+  return()
+}
+res %>%
+  group_by(geo_value) %>%
+  group_map(one_geo_diagnose, keep=TRUE) -> dummy_obj
+```
+
