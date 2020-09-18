@@ -516,20 +516,20 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
 
   ## Note: only using lasso for now.
 
-  ## cat("\tFitting Ridge...")
-  ## preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0, geo_cv_split_seed = geo_cv_split_seed)
-  ## predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  ## cat(" Done!\n")
+  cat("\tFitting Ridge...")
+  preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0, geo_cv_split_seed = geo_cv_split_seed)
+  predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  cat(" Done!\n")
 
   ## cat("\tFitting SVM...")
   ## preds <- fit_svm(df_train, df_test)
   ## predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   ## cat(" Done!\n")
 
-  ## cat("\tFitting xgboost...")
-  ## preds <- fit_xgb(df_train, df_test)
-  ## predictions[[paste("xgb_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  ## cat(" Done!\n")
+  cat("\tFitting xgboost...")
+  preds <- fit_xgb(df_train, df_test)
+  predictions[[paste("xgb_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  cat(" Done!\n")
 
   ### can add more models here!!! add \hat{y} as a col to |predictions|
 
