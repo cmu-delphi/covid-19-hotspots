@@ -3,6 +3,7 @@ library(lubridate)
 library(xgboost)
 library(pROC)
 
+
 ##' adds NA to value if there is no signal for a particular day
 ##'
 ##' @param df data frame with columns time_value, value, data_source, signal, geo_value
@@ -27,24 +28,32 @@ add_NAval_missing_dates <- function(df){
   })
 }
 
-##' creates a dataframe with lagged information for one geo_value
-##' if slopes = FALSE, creates lagged features
-##' if slopes = TRUE, creates slopes of the time tendencies over t and the past 3, 6, 9... days + adds feature value at time t
+##' Creates a dataframe with lagged information for one geo_value.
+##' If slopes = FALSE, creates only lagged features (up to \code{lags_val} which equals 5).
+##' If slopes = TRUE, creates slopes of the time tendencies over t and the past 3, 6, 9... days + adds feature value at time t
 ##' assumes that time column has points for all dates!!!
 ##'
-##' @param df dataframe with ONE geo_value and ONE feature (which will be lagged), columns val, time
-##' @param lags number of past values to include in the data frame; for time t, dataframe will have in one row \eqn{X_t} until \eqn{X_{t-lag}}.
+##' @param df dataframe with ONE geo_value and ONE feature (which will be
+##'   lagged), columns val, time
+##' @param lags Maximum number of past values from which to calculate the SLOPE
+##'   feature, to include in the data frame.
 ##' @param name variable name that will be used for the lagged features
-##' @param slopes if TRUE, returns a dataframe with slopes based on the past feature values and if FALSE, returs raw lagged features
+##' @param slopes if TRUE, returns a dataframe with slopes based on the past
+##'   feature values and if FALSE, returs raw lagged features
 ##' @return dataframe with lagged features for one geo_value OR slopes
 lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
+  ## Basic checks
+  stopifnot(length(lags) == 1 & lags >= 1)
+
+  ## The fixed number of time lags for the data values themselves.
   df <- df %>% arrange(time_value)
   signal <- df$value
   timestamp <- df$time_value
 
   ## if you want more lags than available points, returns empty dataframe
   len <- nrow(df)
-  if(len<=lags){
+  lags_val = 5
+  if(len <= max(lags, lags_val)){
     return(data.frame())
   }
 
@@ -55,35 +64,71 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
   ## I think it's reasonable to interpolate the TS as long as there are not many sequential missing obs
   ## low priority
 
-  out <- data.frame(time_value = timestamp[(lags+1):len])
+  out <- data.frame(time_value = timestamp)
+  
+  ################################################################
+  ## adding lagged feature from t-0, t-1, t-2, until t-lags  #####
+  ################################################################
+  lags_val = 5
+  for(i in 0:lags_val){
+    inds = 1:(len-i)
+    out <- suppressMessages(bind_cols(out, c(rep(NA,i), signal[inds])))
+  }
+  names(out) = c("time_value", paste(name, "_lag", 0:lags_val, sep = ""))
 
-  ## if(!slopes){
-    ## adding lagged feature from t-0, t-1, t-2, until t-lags
-    for(i in 0:lags){
-      out <- suppressMessages(bind_cols(out, signal[(lags+1-i):(len-i)]))
-    }
-    names(out) = c("time_value", paste(name, "_lag", 0:lags, sep = ""))
-  ## }
+  #############################################
+  ## adding slopes feature every 3 points #####
+  #############################################
   if(slopes){
-    npoints = lags+1
-    nfeats = floor(npoints/3) ## 3 is a magic number. will construct a new feature (new slope) every 3 points
-    limits_lm = round(seq(lags+1, 1, length.out = nfeats+1))
-    ## out[[paste(name, "_lag0", sep = "")]] = signal[(lags+1):(len)]
-    for(j in 1:nfeats){
-      aux <- rep(NA, nrow(out))
-      row_pos <- 1
-      for(i in (lags+1):(len)){
-        signal_vec <- signal[i:(limits_lm[j+1]+row_pos-1)]
-        x <- (1:length(signal_vec))
-        aux[row_pos] <- coef(lm(signal_vec~x))[2]
-        row_pos <- row_pos + 1
-      }
-      out[[paste(name, "_slope", j, sep = "")]] <- aux
+    how_far_back = seq(min(lags, 3), lags, by = 3)
+    for(nback in how_far_back){
+      onevar = make_slope_var(signal, nback)
+      stopifnot(length(onevar) == nrow(out))
+      out[[paste(name, "_slope", nback, sep = "")]] <- onevar
     }
   }
-
   return(out)
 }
+
+##' Calculate slope variable, looking back \code{nback} days.
+##'
+##' @param signal Data.
+##' @param nback How far back to go when calculating slope. For example,
+##'   \code{nback=3} means calculate the slope between indices (t, t-1, .. t-3),
+##'   for all possible \code{t} i.e. \code{t} in \code{(4:len)}. All other
+##'   entries are NA.
+##'
+##' @param return A vector containing slopes calculated from today through
+##'   \code{nback} days.
+make_slope_var <- function(signal, nback){
+  n = length(signal)
+  aux <- rep(NA, n)
+  endpts = (nback+1):(n)
+  for(endpt in endpts){
+    aux[endpt] <- get_slope(endpt + (-nback):0, signal)
+  }
+  return(aux)
+}
+
+##' Get the slope of \code{signal[inds]}.
+##'
+##' @param inds Indices.
+##' @param signal Data.
+##'
+##' @return The slope of a OLS linear regression on \code{signal[inds]}.
+##'
+get_slope <- function(inds, signal){
+  stopifnot(all(inds %in% 1:length(signal)))
+  signal_vec <- signal[inds] %>% na.exclude() %>% as.numeric()
+  if(any(is.na(signal_vec))){
+    slp = NA
+  } else {
+    x <- (1:length(signal_vec))
+    slp = .lm.fit(cbind(1,x), signal_vec)$coef[2] ## MUCH faster version than lm()
+  }
+  return(slp)
+}
+
 
 ##' constructs response variable for one geo_value using the provided function
 ##'
@@ -266,19 +311,20 @@ add_geoinfo <- function(df_all, geo_type){
 }
 
 
-##' outputs data ready for modeling, with all lagged features and binary
-##'    response uses output from API call
+##' Outputs data ready for modeling, with all lagged features and binary
+##'    response uses output from API call.
 ##'
 ##' @param mat resulted from the API call with all signals we want to use for
-##'   model construction
+##'   model construction.
 ##' @param lags number of past values to include in the data frame; for time t,
-##'   dataframe will have in one row X_t until X_{t-lag}
-##' @param n_ahead number of days ahead that response will be computed
-##' @param response name of the response variable in mat
+##'   dataframe will have in one row X_t until X_{t-lag}.
+##' @param n_ahead number of days ahead that response will be computed.
+##' @param response name of the response variable in mat.
 ##' @param fn_response logic for computing response, based on a provided
-##'   response vector whose all points will be used for this computation
-##' @param threshold threshold on increase val to determine hotspot
-##' @param slopes if TRUE, produces a dataframe with slopes based on the past feature values and if FALSE, produces raw lagged features
+##'   response vector whose all points will be used for this computation.
+##' @param threshold threshold on increase val to determine hotspot.
+##' @param slopes if TRUE, produces a dataframe with slopes based on the past
+##'   feature values and if FALSE, produces raw lagged features.
 ##' @param onset if TRUE, then hotspot is defined as the onset of
 ##'   increases. Otherwise, a hotspot is defined as an increasing trend,
 ##'   regardless of the past.
@@ -290,14 +336,16 @@ ready_to_model <- function(mat, lags, n_ahead,
                            threshold = .25,
                            onset = FALSE){
 
-  ## construct lagged features for all available signals, including lagged responses
+  ## Construct lagged features for all available signals, including lagged responses
   # TODO deal with potential NAs?
   features <- mat %>% plyr::ddply(c("signal", "data_source", "geo_value"),
                                   lagged_features_onegeo, lags = lags, slope = slope) %>% na.omit()
-  ## construct hotspot indicator in the resp variable
-  responses <- mat %>% filter(signal == response) %>% plyr::ddply(c("signal", "data_source", "geo_value"), response_onegeo,
-                                                                  n_ahead = n_ahead, fn_response = fn_response, threshold = threshold,
-                                                                  onset = onset) %>% na.omit()
+
+  ## Construct hotspot indicator in the resp variable
+  responses <- mat %>% filter(signal == response) %>%
+    plyr::ddply(c("signal", "data_source", "geo_value"), response_onegeo,
+                n_ahead = n_ahead, fn_response = fn_response, threshold = threshold,
+                onset = onset) %>% na.omit()
 
   ## transform the dataframe in a wide format, with one row per geo_value and date
   names_to_pivot <- colnames(features %>% select(-geo_value, -time_value, -signal, -data_source))
@@ -305,7 +353,8 @@ ready_to_model <- function(mat, lags, n_ahead,
                           values_from = all_of(names_to_pivot)) %>% ungroup
 
   ## join features and response
-  mat_to_model <- inner_join(features, responses %>% select(-signal, -data_source), by = c("geo_value", "time_value")) %>% na.omit()
+  mat_to_model <- inner_join(features, responses %>% select(-signal, -data_source),
+                             by = c("geo_value", "time_value")) %>% na.omit()
   return(mat_to_model)
 }
 
@@ -337,6 +386,10 @@ sample_split_geo <- function(df_model, pct_test = 0.3, seed=0){
   train_geos = geos[-test_ind]
   df_test <- df_model %>% filter(geo_value %in% test_geos)
   df_train <- df_model %>% filter(geo_value %in% train_geos)
+
+  stopifnot(intersect(
+      df_test %>% select(geo_value) %>% unique() %>% unlist(),
+      df_train %>% select(geo_value) %>% unique() %>% unlist()) %>% length() == 0)
 
   ## Todo: check if train and test have equal number of hot spots. Doesn't seem
   ## to be a big problem since we are naively splitting geos, but still..
@@ -372,10 +425,43 @@ sample_split_geo <- function(df_model, pct_test = 0.3, seed=0){
 }
 
 
+#' Make |foldid| argument for covariate matrix |x| and |nfold|-fold
+#' cross-validation; makes nfold geo partitions.
+#'
+#' @param x covariate matrix.
+#' @param nfold nfold.
+#' @param seed seed number to be used for splitting geos..
+#'
+#' @return A numeric vector containing elements of \code{(1:nfold)} specifying
+#'   row numbers of X (or entry numbers of y) to be used for each CV fold.
+make_foldid_geo <- function(x, nfold, seed=10210){
+
+  ## Validation_geos.
+  geos = x %>% select(geo_value) %>% unlist()
+  unique_geos = geos %>% unique() %>% sort()
+  set.seed(seed)
+  geo_blocks = split(sample(unique_geos),
+                     sort(1:length(unique_geos) %% nfold))
+  cv_inds = lapply(1:nfold, function(ifold){
+    which(geos %in% geo_blocks[[ifold]])
+  })
+
+  final_inds = rep(NA, length(geos))
+  for(ifold in 1:nfold){
+    inds = cv_inds[[ifold]]
+    final_inds[inds] = ifold
+  }
+
+  ## Quick test before returning
+  stopifnot(all((x[which(final_inds==1),] %>%
+                select(geo_value) %>%
+                unique() %>% unlist()) %in% geo_blocks[[1]]))
+  return(final_inds)
+}
 
 
 #' Make |foldid| argument for covariate matrix |x| and |nfold|-fold
-#' cross-validation; makes nfold consecutive time blocks
+#' cross-validation; makes nfold consecutive time blocks.
 #'
 #' @param x covariate matrix
 #' @param nfold nfold
@@ -416,26 +502,29 @@ make_foldid <- function(x, nfold){
 ##' @param n_ahead number of days ahead that response will be computed
 ##' @param response string just for rendering plots later on
 ##' @return
-fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "confirmed_7dav_incidence_num"){
+fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "confirmed_7dav_incidence_num",
+                               geo_cv_split_seed = 10210){
   cat("Fitting models:\n")
 
   predictions <- df_test %>% select(geo_value, time_value, resp)
 
   cat("\tFitting LASSO...")
-  preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1)
+  preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1, geo_cv_split_seed = geo_cv_split_seed )
   predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
 
+
+  ## Note: only using lasso for now.
+
   cat("\tFitting Ridge...")
-  preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0)
+  preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0, geo_cv_split_seed = geo_cv_split_seed)
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
 
-  #### IF
-  cat("\tFitting SVM...")
-  preds <- fit_svm(df_train, df_test)
-  predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  cat(" Done!\n")
+  ## cat("\tFitting SVM...")
+  ## preds <- fit_svm(df_train, df_test)
+  ## predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
+  ## cat(" Done!\n")
 
   cat("\tFitting xgboost...")
   preds <- fit_xgb(df_train, df_test)
@@ -465,10 +554,14 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
 ##'   covariates.
 ##' @param df_test Test matrix. Same format as df_train.
 ##' @param nfold 5 (previously 10).
-##' @param alpha 0 for lasso, or 1 for ridge regression. Used by \code{glmnet()}.
+##' @param alpha 1 for lasso, or 0 for ridge regression. Used by
+##'   \code{glmnet()}.
+##' @param geo_cv_split_seed Random seed for geo split for cross validation by
+##'   \code{glmnet::glmnet()}.
 ##'
 ##' @return Numeric vector the same length as \code{nrow(df_test)}.
-fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 0){
+fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1,
+                                    geo_cv_split_seed = 10210){
 
   ## Input checks (should be common for all fit_OOOO() functions
   stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_train)))
@@ -477,8 +570,11 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 0){
   ## Input check
   stopifnot(alpha %in% c(0,1)) ## Only allow ridge or lasso for now.
 
-  ## Make contiguous time blocks for CV
+  ## (Not used for now) Make contiguous time blocks for CV
   foldid <- make_foldid(df_train, nfold)
+
+  ## Split by geo
+  ## foldid <- make_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
 
   ## Main part of the lasso fitting and predicting
   fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
@@ -487,10 +583,8 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 0){
                          alpha = alpha,
                          foldid = foldid,
                          nfold = nfold)
-  ## fit_lasso <- glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
-  ##                     y = df_train$resp, family = "binomial", lambda = fit_lasso$lambda.1se, alpha = alpha)
-  preds = predict(fit_lasso, s = "lambda.min", ## TODO: double check
-                  newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1] ## use minimum CV score instead of 1se
+  preds = predict(fit_lasso, s = "lambda.min",
+                  newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
 
   ## Out checks (should be common for all fit_OOOO() functions)
   stopifnot(length(preds) == nrow(df_test))
@@ -804,7 +898,7 @@ plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_exis
 
   df_temp <- inner_join(predictions, get_population(geo_type), by = "geo_value")
   df_temp <- reshape2::melt(df_temp, id.vars = c("geo_value", "time_value", "resp", "population"))
-  df_auc <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(function(df, ...){data.frame(auc = round(auc(response = df$resp, predictor = df$value)[1], 3))})
+  df_auc <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(function(df, ...){data.frame(auc = round(pROC::auc(response = df$resp, predictor = df$value)[1], 3))})
   if(only_return_auc) return(df_auc)
   df_plot <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(~roc_onemodel(.x, popweighted = popweighted))
 
@@ -840,21 +934,27 @@ plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_exis
 ##' @param splitted a list containing train and test data.
 ##'
 ##' @return
-make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope, split_type, onset){
+make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
+                       fn_response_name, threshold, slope, split_type, onset,
+                       geo_cv_split_seed = 10210){
 
   ######################################
   ## Model with lagged responses only ##
   ######################################
   predictions_onlylaggedresponse <- fit_predict_models(splitted$df_train %>% select(geo_value, time_value, resp, contains(response)),
                                                        splitted$df_test %>% select(geo_value, time_value, resp, contains(response)),
-                                                       lags = lags, n_ahead = n_ahead)
+                                                       lags = lags, n_ahead = n_ahead,
+                                                       geo_cv_split_seed = geo_cv_split_seed)
   a = plot_adapted_roc(predictions_onlylaggedresponse, geo_type = geo_type)
   a
 
   ####################################################
   ## Model with lagged responses + facebook signals ##
   ####################################################
-  predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test, lags = lags, n_ahead = n_ahead)
+  predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test,
+                                                      lags = lags, n_ahead = n_ahead,
+                                                      geo_cv_split_seed = geo_cv_split_seed)
+
   b = plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type)
   b
 
@@ -893,7 +993,6 @@ calc_auc <- function(destin = "figures", splitted, lags, n_ahead, geo_type, fn_r
   predictions_onlylaggedresponse <- fit_predict_models(splitted$df_train %>% select(geo_value, time_value, resp, contains(response)),
                                                        splitted$df_test %>% select(geo_value, time_value, resp, contains(response)),
                                                        lags = lags, n_ahead = n_ahead)
-
   df_auc_no_fb = plot_roc(predictions_onlylaggedresponse, geo_type = geo_type, popweighted = FALSE, only_return_auc = TRUE)
 
   ####################################################
