@@ -10,7 +10,7 @@ output:
 ---
 
 ```{r global_options, include=FALSE}
-knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=TRUE, cache=TRUE,
+knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=TRUE, cache=FALSE,
                       warning=FALSE, message=FALSE)
 library(ggplot2)
 library(covidcast)
@@ -278,7 +278,7 @@ First, we download and form the data.
 ```{r form-data, eval=TRUE}
 ## Setup
 lags = 28
-n_ahead = 21 ## 28
+n_ahead = 28 ## 28
 threshold = 0.25
 geo_type = "state" ## or "county"
 response = "confirmed_7dav_incidence_prop"
@@ -303,7 +303,6 @@ suppressMessages({
 mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
 
 ## Form the y|X matrix
-source('helpers.r')
 t0 <- Sys.time()
 t0
 df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
@@ -314,16 +313,14 @@ df_model %>% names() %>% print()
 ## load(file = file.path(outputdir, "data-county.Rdata"))
 
 ## Further split into training and test
-geo_split_seed = 100
-geo_cv_split_seed = 10000
-splitted <- sample_split_geo(df_model, pct_test = 0.3, seed = geo_split_seed)
+splitted <- stratified_sample_split_geo(df_model, pct_test = 0.3)
 
 ## See the distribution of 1's and 0's
 df_model %>% select(resp) %>% table() %>% print()
 splitted$df_train %>% select(resp) %>% table() %>% print()
 splitted$df_test %>% select(resp) %>% table() %>% print()
 
-foldid <- make_foldid_geo(splitted$df_train, nfold = 5, geo_cv_split_seed)
+foldid <- make_stratified_foldid_geo(splitted$df_train, nfold = 5)
 for(ifold in 1:5){
   splitted$df_train[which(foldid==ifold),] %>% select(resp) %>% table() %>% print()
 }
@@ -331,7 +328,7 @@ for(ifold in 1:5){
 
 Now, fit the hot-spot models and visualize the model performances.
 
-```{r make-plots, eval=FALSE}
+```{r make-plots, eval=TRUE}
 make_plots(destin = outputdir,
            splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope, split_type, onset, geo_cv_split_seed)
 ```

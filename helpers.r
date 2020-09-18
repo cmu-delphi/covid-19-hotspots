@@ -373,14 +373,37 @@ sample_split_date <- function(df_tomodel, pct_test=0.3){
 }
 
 
-## Sample splitting by geo levels.
-sample_split_geo <- function(df_model, pct_test = 0.3, seed=0){
+##' Wrapper around \code{sample_split_geo} to continue to sample until the 0/1
+##' distribution of the data train and test is very close
+##'
+##' @param df_model Output from \code{ready_to_model()}.
+##' @param pct_test Percent of data to use for test data.
+##'
+##' @return The same format of out put as \code{sample_split_geo()}.
+stratified_sample_split_geo <- function(df_model, pct_test = 0.3){
+  nsim = 1000
+  for(ii in 1:nsim){
+    splitted = sample_split_geo(df_model, pct_test = pct_test)
+    ratio_train = splitted$df_train %>% select(resp) %>% table() %>% (function(a){a["1"]/a["0"]})
+    ratio_test = splitted$df_test %>% select(resp) %>% table() %>% (function(a){a["1"]/a["0"]})
+    if(abs(ratio_train - ratio_test) < 0.02) break
+  }
+  return(splitted)
+}
+
+##' Sample splitting by geo valuse.
+##'
+##' @param df_model Output from \code{ready_to_model()}.
+##' @param pct_test Percent of data to use for test data.
+##'
+##' @return List containing \code{df_train} and \code{df_test}.
+sample_split_geo <- function(df_model, pct_test = 0.3, seed=NULL){
 
   ## df_tomodel <- df_tomodel %>% arrange(desc(time_value)) %>% na.omit()
   ## start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"geo_value"]
   ## start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"geo_value"]
   geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
-  set.seed(seed)
+  if(!is.null(seed)) set.seed(seed)
   test_ind =  sample(length(geos), length(geos) * pct_test)
   test_geos = geos[test_ind]
   train_geos = geos[-test_ind]
@@ -425,6 +448,28 @@ sample_split_geo <- function(df_model, pct_test = 0.3, seed=0){
 }
 
 
+##' Wrapper for \code{make_foldid_geo} to sample a set of CV fold IDs that have
+##' a somewhat even distribution of 0s and 1s among the folds.
+##'
+make_stratified_foldid_geo <- function(x, nfold){
+
+  nsim = 10000
+  for(ii in 1:nsim){
+    x = splitted$df_train
+    foldid = make_foldid_geo(x, nfold)
+    ratios = sapply(1:nfold, function(ifold){
+      x[which(foldid==ifold),] %>%
+        select(resp) %>%
+        table() %>%
+        (function(a){a["1"]/a["0"]})
+    })
+    ## ratios %>% round(2) %>% print()
+    if(any(is.na(ratios))) next
+    if(all(abs(ratios - (1/nfold)) < (1/nfold) * 0.5) ) break
+  }
+  return(foldid)
+}
+
 #' Make |foldid| argument for covariate matrix |x| and |nfold|-fold
 #' cross-validation; makes nfold geo partitions.
 #'
@@ -434,12 +479,12 @@ sample_split_geo <- function(df_model, pct_test = 0.3, seed=0){
 #'
 #' @return A numeric vector containing elements of \code{(1:nfold)} specifying
 #'   row numbers of X (or entry numbers of y) to be used for each CV fold.
-make_foldid_geo <- function(x, nfold, seed=10210){
+make_foldid_geo <- function(x, nfold, seed=NULL){
 
   ## Validation_geos.
   geos = x %>% select(geo_value) %>% unlist()
   unique_geos = geos %>% unique() %>% sort()
-  set.seed(seed)
+  if(!is.null(seed)) set.seed(seed)
   geo_blocks = split(sample(unique_geos),
                      sort(1:length(unique_geos) %% nfold))
   cv_inds = lapply(1:nfold, function(ifold){
@@ -503,13 +548,17 @@ make_foldid <- function(x, nfold){
 ##' @param response string just for rendering plots later on
 ##' @return
 fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "confirmed_7dav_incidence_num",
-                               geo_cv_split_seed = 10210){
+                               geo_cv_split_seed = NULL,
+                               stratify_cv_split = TRUE){
   cat("Fitting models:\n")
 
   predictions <- df_test %>% select(geo_value, time_value, resp)
 
   cat("\tFitting LASSO...")
-  preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1, geo_cv_split_seed = geo_cv_split_seed )
+  suppressMessages({
+    preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1, geo_cv_split_seed = geo_cv_split_seed,
+                                     stratify_cv_split = stratify_cv_split)
+  })
   predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
 
@@ -517,7 +566,10 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   ## Note: only using lasso for now.
 
   cat("\tFitting Ridge...")
-  preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0, geo_cv_split_seed = geo_cv_split_seed)
+  suppressMessages({
+    preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0, geo_cv_split_seed = geo_cv_split_seed,
+                                     stratify_cv_split = stratify_cv_split)
+  })
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
 
@@ -527,7 +579,9 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   ## cat(" Done!\n")
 
   cat("\tFitting xgboost...")
-  preds <- fit_xgb(df_train, df_test)
+  suppressMessages({
+    preds <- fit_xgb(df_train, df_test)
+  })
   predictions[[paste("xgb_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   cat(" Done!\n")
 
@@ -561,7 +615,8 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
 ##'
 ##' @return Numeric vector the same length as \code{nrow(df_test)}.
 fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1,
-                                    geo_cv_split_seed = 10210){
+                                    geo_cv_split_seed = NULL,
+                                    stratify_cv_split = TRUE){
 
   ## Input checks (should be common for all fit_OOOO() functions
   stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_train)))
@@ -571,10 +626,14 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1,
   stopifnot(alpha %in% c(0,1)) ## Only allow ridge or lasso for now.
 
   ## (Not used for now) Make contiguous time blocks for CV
-  foldid <- make_foldid(df_train, nfold)
+  ## foldid <- make_foldid(df_train, nfold)
 
   ## Split by geo
-  ## foldid <- make_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
+  if(stratify_cv_split){
+    foldid <- make_stratified_foldid_geo(df_train, nfold)
+  } else {
+    foldid <- make_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
+  }
 
   ## Main part of the lasso fitting and predicting
   fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
@@ -985,14 +1044,17 @@ make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
 ##' @param splitted a list containing train and test data.
 ##'
 ##' @return
-calc_auc <- function(destin = "figures", splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope, split_type, onset){
+calc_auc <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
+                     fn_response_name, threshold, slope, split_type, onset,
+                     stratify_cv_split = TRUE){
 
   ######################################
   ## Model with lagged responses only ##
   ######################################
   predictions_onlylaggedresponse <- fit_predict_models(splitted$df_train %>% select(geo_value, time_value, resp, contains(response)),
                                                        splitted$df_test %>% select(geo_value, time_value, resp, contains(response)),
-                                                       lags = lags, n_ahead = n_ahead)
+                                                       lags = lags, n_ahead = n_ahead,
+                                                       stratify_cv_split = stratify_cv_split)
   df_auc_no_fb = plot_roc(predictions_onlylaggedresponse, geo_type = geo_type, popweighted = FALSE, only_return_auc = TRUE)
 
   ####################################################
