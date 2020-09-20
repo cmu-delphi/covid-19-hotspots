@@ -457,7 +457,7 @@ make_stratified_foldid_geo <- function(x, nfold, seed=NULL){
   if(!is.null(seed)) set.seed(seed)
   nsim = 10000
   for(ii in 1:nsim){
-    x = splitted$df_train
+    ## x = splitted$df_train
     foldid = make_foldid_geo(x, nfold)
     ratios = sapply(1:nfold, function(ifold){
       x[which(foldid==ifold),] %>%
