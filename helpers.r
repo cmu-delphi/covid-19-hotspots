@@ -295,7 +295,7 @@ add_geoinfo <- function(df_all, geo_type){
       mutate(geo_value = as.numeric(STATE)) %>%
       filter(STATE != 0) %>%
       group_by(geo_value) %>%
-      summarise(population = sum(POPESTIMATE2019))
+      summarise(population = sum(POPESTIMATE2019), .groups = 'drop')
     state_crosswalk <- maps::state.fips %>%
       select(abb, fips) %>% distinct() %>% mutate(abb = tolower(abb))
     state_pop <- state_pop %>%
@@ -373,14 +373,38 @@ sample_split_date <- function(df_tomodel, pct_test=0.3){
 }
 
 
-## Sample splitting by geo levels.
-sample_split_geo <- function(df_model, pct_test = 0.3, seed=0){
+##' Wrapper around \code{sample_split_geo} to continue to sample until the 0/1
+##' distribution of the data train and test is very close
+##'
+##' @param df_model Output from \code{ready_to_model()}.
+##' @param pct_test Percent of data to use for test data.
+##'
+##' @return The same format of out put as \code{sample_split_geo()}.
+stratified_sample_split_geo <- function(df_model, pct_test = 0.3, seed=NULL){
+  if(!is.null(seed)) set.seed(seed)
+  nsim = 1000
+  for(ii in 1:nsim){
+    splitted = sample_split_geo(df_model, pct_test = pct_test)
+    ratio_train = splitted$df_train %>% select(resp) %>% table() %>% (function(a){a["1"]/a["0"]})
+    ratio_test = splitted$df_test %>% select(resp) %>% table() %>% (function(a){a["1"]/a["0"]})
+    if(abs(ratio_train - ratio_test) < 0.02) break
+  }
+  return(splitted)
+}
+
+##' Sample splitting by geo valuse.
+##'
+##' @param df_model Output from \code{ready_to_model()}.
+##' @param pct_test Percent of data to use for test data.
+##'
+##' @return List containing \code{df_train} and \code{df_test}.
+sample_split_geo <- function(df_model, pct_test = 0.3, seed=NULL){
 
   ## df_tomodel <- df_tomodel %>% arrange(desc(time_value)) %>% na.omit()
   ## start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"geo_value"]
   ## start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"geo_value"]
   geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
-  set.seed(seed)
+  if(!is.null(seed)) set.seed(seed)
   test_ind =  sample(length(geos), length(geos) * pct_test)
   test_geos = geos[test_ind]
   train_geos = geos[-test_ind]
@@ -425,6 +449,29 @@ sample_split_geo <- function(df_model, pct_test = 0.3, seed=0){
 }
 
 
+##' Wrapper for \code{make_foldid_geo} to sample a set of CV fold IDs that have
+##' a somewhat even distribution of 0s and 1s among the folds.
+##'
+make_stratified_foldid_geo <- function(x, nfold, seed=NULL){
+
+  if(!is.null(seed)) set.seed(seed)
+  nsim = 10000
+  for(ii in 1:nsim){
+    x = splitted$df_train
+    foldid = make_foldid_geo(x, nfold)
+    ratios = sapply(1:nfold, function(ifold){
+      x[which(foldid==ifold),] %>%
+        select(resp) %>%
+        table() %>%
+        (function(a){a["1"]/a["0"]})
+    })
+    ## ratios %>% round(2) %>% print()
+    if(any(is.na(ratios))) next
+    if(all(abs(ratios - (1/nfold)) < (1/nfold) * 0.5) ) break
+  }
+  return(foldid)
+}
+
 #' Make |foldid| argument for covariate matrix |x| and |nfold|-fold
 #' cross-validation; makes nfold geo partitions.
 #'
@@ -434,12 +481,12 @@ sample_split_geo <- function(df_model, pct_test = 0.3, seed=0){
 #'
 #' @return A numeric vector containing elements of \code{(1:nfold)} specifying
 #'   row numbers of X (or entry numbers of y) to be used for each CV fold.
-make_foldid_geo <- function(x, nfold, seed=10210){
+make_foldid_geo <- function(x, nfold, seed=NULL){
 
   ## Validation_geos.
   geos = x %>% select(geo_value) %>% unlist()
   unique_geos = geos %>% unique() %>% sort()
-  set.seed(seed)
+  if(!is.null(seed)) set.seed(seed)
   geo_blocks = split(sample(unique_geos),
                      sort(1:length(unique_geos) %% nfold))
   cv_inds = lapply(1:nfold, function(ifold){
@@ -503,33 +550,43 @@ make_foldid <- function(x, nfold){
 ##' @param response string just for rendering plots later on
 ##' @return
 fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "confirmed_7dav_incidence_num",
-                               geo_cv_split_seed = 10210){
-  cat("Fitting models:\n")
+                               geo_cv_split_seed = NULL,
+                               stratify_cv_split = TRUE,
+                               verbose = FALSE){
+  if(verbose) cat("Fitting models:\n")
 
   predictions <- df_test %>% select(geo_value, time_value, resp)
 
-  cat("\tFitting LASSO...")
-  preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1, geo_cv_split_seed = geo_cv_split_seed )
+  if(verbose) cat("\tFitting LASSO...")
+  suppressMessages({
+    preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1, geo_cv_split_seed = geo_cv_split_seed,
+                                     stratify_cv_split = stratify_cv_split)
+  })
   predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  cat(" Done!\n")
+  if(verbose) cat(" Done!\n")
 
 
   ## Note: only using lasso for now.
 
-  cat("\tFitting Ridge...")
-  preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0, geo_cv_split_seed = geo_cv_split_seed)
+  if(verbose) cat("\tFitting Ridge...")
+  suppressMessages({
+    preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0, geo_cv_split_seed = geo_cv_split_seed,
+                                     stratify_cv_split = stratify_cv_split)
+  })
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  cat(" Done!\n")
+  if(verbose) cat(" Done!\n")
 
   ## cat("\tFitting SVM...")
   ## preds <- fit_svm(df_train, df_test)
   ## predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   ## cat(" Done!\n")
 
-  cat("\tFitting xgboost...")
-  preds <- fit_xgb(df_train, df_test)
+  if(verbose) cat("\tFitting xgboost...")
+  suppressMessages({
+    preds <- fit_xgb(df_train, df_test)
+  })
   predictions[[paste("xgb_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
-  cat(" Done!\n")
+  if(verbose) cat(" Done!\n")
 
   ### can add more models here!!! add \hat{y} as a col to |predictions|
 
@@ -561,7 +618,8 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
 ##'
 ##' @return Numeric vector the same length as \code{nrow(df_test)}.
 fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1,
-                                    geo_cv_split_seed = 10210){
+                                    geo_cv_split_seed = NULL,
+                                    stratify_cv_split = TRUE){
 
   ## Input checks (should be common for all fit_OOOO() functions
   stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_train)))
@@ -571,10 +629,14 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1,
   stopifnot(alpha %in% c(0,1)) ## Only allow ridge or lasso for now.
 
   ## (Not used for now) Make contiguous time blocks for CV
-  foldid <- make_foldid(df_train, nfold)
+  ## foldid <- make_foldid(df_train, nfold)
 
   ## Split by geo
-  ## foldid <- make_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
+  if(stratify_cv_split){
+    foldid <- make_stratified_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
+  } else {
+    foldid <- make_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
+  }
 
   ## Main part of the lasso fitting and predicting
   fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
@@ -660,7 +722,7 @@ fit_xgb <- function(df_train, df_test){
                    gamma = 1,
                    max_depth = 6,
                    nrounds = 500,
-                   nfold = 5,
+                   ## nfold = 5,
                    objective = "binary:logistic",
                    colsample_bytree = 0.7,
                    subsample = 0.7)
@@ -804,7 +866,7 @@ plot_adapted_roc <- function(predictions, geo_type = "county", add = FALSE, df_p
 
   precision_thresh <- df_temp %>% select(resp, population, geo_value, time_value) %>%
     distinct() %>% filter(resp == 1) %>%
-    summarise(sum(population)/sum(df_temp$population)) %>%
+    summarise(sum(population)/sum(df_temp$population), .groups = 'drop') %>%
     unlist()
 
   if(!add){
@@ -928,6 +990,34 @@ plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_exis
 }
 
 
+make_preds <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
+                       response,
+                       fn_response_name, threshold, slope, onset,
+                       geo_cv_split_seed = NULL,
+                       include_fb = TRUE){
+
+  ######################################
+  ## Model with lagged responses only ##
+  ######################################
+  if(!include_fb){
+  predictions_onlylaggedresponse <- fit_predict_models(splitted$df_train %>% select(geo_value, time_value, resp, contains(response)),
+                                                       splitted$df_test %>% select(geo_value, time_value, resp, contains(response)),
+                                                       lags = lags, n_ahead = n_ahead,
+                                                       geo_cv_split_seed = geo_cv_split_seed)
+    preds = predictions_onlylaggedresponse
+  }
+  ####################################################
+  ## Model with lagged responses + facebook signals ##
+  ####################################################
+  if(include_fb){
+  predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test,
+                                                      lags = lags, n_ahead = n_ahead,
+                                                      geo_cv_split_seed = geo_cv_split_seed)
+    preds = predictions_laggedandfacebook
+  }
+  return(preds)
+}
+
 ##' Fit various models to train data, and make plots for test data.
 ##'
 ##' @param destin Where to save plots.
@@ -935,8 +1025,9 @@ plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_exis
 ##'
 ##' @return
 make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
-                       fn_response_name, threshold, slope, split_type, onset,
-                       geo_cv_split_seed = 10210){
+                       response,
+                       fn_response_name, threshold, slope, onset,
+                       geo_cv_split_seed = NULL){
 
   ######################################
   ## Model with lagged responses only ##
@@ -946,7 +1037,6 @@ make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
                                                        lags = lags, n_ahead = n_ahead,
                                                        geo_cv_split_seed = geo_cv_split_seed)
   a = plot_adapted_roc(predictions_onlylaggedresponse, geo_type = geo_type)
-  a
 
   ####################################################
   ## Model with lagged responses + facebook signals ##
@@ -956,11 +1046,9 @@ make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
                                                       geo_cv_split_seed = geo_cv_split_seed)
 
   b = plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type)
-  b
-
-  # ggsave(plot = b, filename = paste("figures/", toupper(geo_type), "precrecall_lag", lags,"_nahead", n_ahead, ".png", sep = ""), width = 12, height = 8, dpi = 200)
+  plot_adj_roc = b
   plotname_root = paste0(geo_type, "__resp_", threshold*100, "__lag_", lags,"__nahead_",
-                            n_ahead, "__slope_", slope, "__split_type_", split_type,
+                            n_ahead, "__slope_", slope,
                             "__onset_", onset)
   plotname_adj_roc = paste0(plotname_root, ".png")
   plotname_roc = paste0(plotname_root, "_ROC", ".png")
@@ -970,12 +1058,13 @@ make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
 
   ## Also plot regular ROC urves
   a = plot_roc(predictions_onlylaggedresponse, geo_type = geo_type, popweighted = FALSE)
-  a
   b = plot_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type, popweighted = FALSE)
-  b
-    ggsave(plot = b,
-           filename = file.path(destin, fn_response_name,  plotname_roc),
-           width = 12, height = 8, dpi = 200)
+  ggsave(plot = b,
+         filename = file.path(destin, fn_response_name,  plotname_roc),
+         width = 12, height = 8, dpi = 200)
+  plot_roc = b
+  return(list(adj_roc = plot_adj_roc,
+              roc = plot_roc))
 }
 
 
@@ -985,20 +1074,25 @@ make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
 ##' @param splitted a list containing train and test data.
 ##'
 ##' @return
-calc_auc <- function(destin = "figures", splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope, split_type, onset){
+calc_auc <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
+                     fn_response_name, threshold, slope,  onset,
+                     geo_cv_split_seed = NULL){
 
   ######################################
   ## Model with lagged responses only ##
   ######################################
   predictions_onlylaggedresponse <- fit_predict_models(splitted$df_train %>% select(geo_value, time_value, resp, contains(response)),
                                                        splitted$df_test %>% select(geo_value, time_value, resp, contains(response)),
-                                                       lags = lags, n_ahead = n_ahead)
+                                                       lags = lags, n_ahead = n_ahead,
+                                                       geo_cv_split_seed = geo_cv_split_seed,
+                                                       verbose=TRUE)
   df_auc_no_fb = plot_roc(predictions_onlylaggedresponse, geo_type = geo_type, popweighted = FALSE, only_return_auc = TRUE)
 
   ####################################################
   ## Model with lagged responses + facebook signals ##
   ####################################################
-  predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test, lags = lags, n_ahead = n_ahead)
+  predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test, lags = lags, n_ahead = n_ahead,
+                                                      geo_cv_split_seed = geo_cv_split_seed)
   df_auc_yes_fb = plot_roc(predictions_laggedandfacebook, geo_type = geo_type, popweighted = FALSE, only_return_auc = TRUE)
 
   ## column_names = paste0(c("no_fb", "yes_fb"), paste0("_n_ahead", n_ahead))
@@ -1007,4 +1101,46 @@ calc_auc <- function(destin = "figures", splitted, lags, n_ahead, geo_type, fn_r
   auc_df = df_auc_no_fb %>% full_join(df_auc_yes_fb, by="model")
   colnames(auc_df)[2:3] =  column_names
   return(auc_df)
+}
+
+
+##' Main function to get a data frame of the form y|X.
+get_data <- function(geo_type = "state", lags = 28, n_ahead = 28, threshold = 0.25,
+                     response = "confirmed_7dav_incidence_prop",
+                     fn_response = response_diff_avg_1week_min20,
+                     fn_response_name = "response_diff_avg_1week_min20",
+                     slope = TRUE,
+                     onset = FALSE,
+                     start_day = as.Date("2020-05-01"),
+                     end_day = as.Date("2020-08-30")
+                     ){
+
+  ## Read in data once
+  data_sources = c("indicator-combination",
+                   "fb-survey")
+  signals = c("confirmed_7dav_incidence_prop",
+              "smoothed_hh_cmnty_cli")
+  response = "confirmed_7dav_incidence_prop"
+  signals = data.frame(data_sources = data_sources, signals = signals)
+  suppressMessages({
+    mat = covidcast_signals(signals,
+                            start_day = start_day, end_day = end_day, geo_type = geo_type)
+  })
+  mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
+
+  ## Form the y|X matrix
+  df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
+  return(list(mat = mat,
+              df_model = df_model,
+              geo_type = geo_type,
+              lags = lags,
+              n_ahead = n_ahead,
+              threshold = threshold,
+              response = response,
+              fn_response = fn_response,
+              fn_response_name = fn_response_name,
+              slope = slope,
+              onset = onset,
+              start_day = start_day,
+              end_day = end_day))
 }
