@@ -1,16 +1,16 @@
 ---
 title: Predicting hotspots
 author: Justin, Natalia 
-date: Aug 26, 2020
+date: Sep 18, 2020
 output:
   html_document:
-    code_folding: show
+    code_folding: hide
     toc: true
     toc_float: true
 ---
 
 ```{r global_options, include=FALSE}
-knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=TRUE, cache=FALSE,
+knitr::opts_chunk$set(fig.width=14, fig.height=8, echo=TRUE, eval=TRUE, cache=TRUE,
                       warning=FALSE, message=FALSE)
 library(ggplot2)
 library(covidcast)
@@ -18,6 +18,7 @@ library(tidyverse)
 library(tidyr) ## for pivot_wider() ?
 library(devtools)
 library(glmnet)
+library(knitr)
 source("helpers.r")
 
 ## Location of your covidcast R package.
@@ -31,328 +32,82 @@ outputdir = "./figures"
 ## Goal
 
 Use various classifiers (e.g. l1-penalized and ridge logistic regression, and
-SVM, xgboost), for a hotspot detection model.
+xgboost), for a hotspot detection model.
 
 ## Data and model 
 
-**Geographical levels** Two levels: state and county.
+**Geographical levels** State and County.
 
 **Data** Between 2020-05-01 and 2020-08-25, take the 
 
-- 7-day JHU case proportion (incidence rate),
-- **One of the** FB surveys (smoothed household survey).
+* 7-day JHU case proportion (incidence rate),
+* **One** FB surveys (smoothed household survey).
 	 
 Then, form a covariate matrix by time-lagging these by 0 through 28
 days. Additionally, add features by calculating "slopes of JHU IR from the past
 x days", where $x \in \{3,6,9,12,15..\}$.
 
-The resulting covariate matrix is roughly 3162 by 193 at the state level, and 52093
-by 193 at the county level. We have 953 different counties in our sample. 
+The resulting covariate matrix is roughly 3162 by 193 at the state level, and
+52093 by 193 at the county level. We have 953 different counties in our sample.
 
 **Response data**
 
-- **1** if 25% increase of JHU IR in the one week period 22-28 days from now,
+* **1** if 25% increase of JHU IR in the one week period 22-28 days from now,
   compared to the past 1 week (-1 through -7 days) **and** the later 1-week
   period exceeds $20$.
-- **0** otherwise.
+* **0** otherwise.
 
-**Training and test data** This is done by splitting the data into training/test
-set at a ratio of 70%/30%, by geographical level. The training set is used for
-training the hotspot model (e.g. for cross-validation of `glmnet()` or training
-`svm()`), and the test data is used only for creating the ROC or adjusted ROC
-curves.
+**Training and test data** 
 
+* We split the data into training/test set at a ratio of 70%/30%, by
+geographical level. 
+
+* The training and test data were splitted by **stratified sampling** to produce
+  a similar ratio of 0s and 1s.
+
+* The training set is used for training the hotspot model (e.g. for
+  cross-validation of `glmnet()` or training `xgb()`), and,
+
+* The test data is used only for creating the ROC or adjusted ROC curves.
+
+**Cross-validation** folds for lasso \& ridge are also formed by stratified
+sampling, to make sure the ratio of 0s and 1s are similar in training and test
+data.
 
 **Models** L1- and L2- penalized logistic regression, SVM, xgboost.
 
-**Cross-validation for `glmnet`** is done in a block-wise fashion **in time**;
-five consecutive time blocks are used as test sets (folds).
 
+## Visualizing state-level data
 
+We first visualize the 1's and 0's in the state level data (highlighting by each
+CV fold *and* test data, in different color boxes):
 
-## Results
+```{r viz-response, eval=TRUE, fig.width=10, fig.height=35}
+## Load data and parameters
+obj_state = get_data(geo_type = "state")
+list2env(obj_state, envir = .GlobalEnv)
 
-### State
+## Split training/test.
+splitted <- stratified_sample_split_geo(df_model, pct_test = 0.3, seed = 100)
 
-First, visualizing the hotspots for the state level data:
-
-![](figures/for_v1_report/hotspot_vis_state.png)
-
-The distribution of 0's and 1's in the entire state level data is
-
-<table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;">
- <thead>
-  <tr>
-   <th style="text-align:left;"> Response </th>
-   <th style="text-align:right;"> Count </th>
-  </tr>
- </thead>
-<tbody>
-  <tr>
-   <td style="text-align:left;"> 0 </td>
-   <td style="text-align:right;"> 2705 </td>
-  </tr>
-  <tr>
-   <td style="text-align:left;"> 1 </td>
-   <td style="text-align:right;"> 457 </td>
-  </tr>
-</tbody>
-</table>
-
-
-training set:
-
-<table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;">
- <thead>
-  <tr>
-   <th style="text-align:left;"> Response </th>
-   <th style="text-align:right;"> Count </th>
-  </tr>
- </thead>
-<tbody>
-  <tr>
-   <td style="text-align:left;"> 0 </td>
-   <td style="text-align:right;"> 1906 </td>
-  </tr>
-  <tr>
-   <td style="text-align:left;"> 1 </td>
-   <td style="text-align:right;"> 326 </td>
-  </tr>
-</tbody>
-</table>
-
-test set
-
-<table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;">
- <thead>
-  <tr>
-   <th style="text-align:left;"> Response </th>
-   <th style="text-align:right;"> Count </th>
-  </tr>
- </thead>
-<tbody>
-  <tr>
-   <td style="text-align:left;"> 0 </td>
-   <td style="text-align:right;"> 799 </td>
-  </tr>
-  <tr>
-   <td style="text-align:left;"> 1 </td>
-   <td style="text-align:right;"> 131 </td>
-  </tr>
-</tbody>
-</table>
-
-
-Using `n_ahead=28`, the performances of four different classifiers can be
-visualized as ROC curves. Here, thick transparent lines are the results using
-Facebook data, and thin lines are those excluding Facebook data.
-
-![](figures/for_v1_report/ROC_state_notweighted.png){width=60%}
-
-We can also see population-weighted ROC curves:
-
-![](figures/for_v1_report/ROC_state_weighted.png){width=60%}
-
-Given the class imbalance, we can look at precision-recall plots:
-
-![](figures/for_v1_report/ROCPR_state.png){width=60%}
-
-And now the same precision-recall plot, but considering a logged x axis:
-
-![](figures/for_v1_report/ROCPR_state_log.png){width=60%}
-
-Now, choosing a summary statistic to measure the *advantage* in performance
-using Facebook data, we'll calculate *difference* in the area under the curve
-(AUC) between the two versions, for each classifier, as a function of **how far
-ahead hotspots are defined as** i.e. for a range of `n_ahead`, in $\{10, \cdots,
-30\}$:
-
-![](figures/for_v1_report/auc-by-nahead-state.png)
-
-Interestingly, the advantage of using Facebook data increases as we try to predict a hotspot in a date further in the future. 
-
-The analysis depends a bit on how the training/test split is made among geographical
-regions. If we use a different random seed for splitting, the ROC curves can
-differ quite a bit:
-
-![](figures/for_v1_report/ROC_state_newseed.png){width=60%}
-
-While the classifier performance varies by seed, the advantage that FB grants is
-clearly always present.
-
-### County
-
-The numbers in the county level data are:
-
-
-training set:
-
-<table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;">
- <thead>
-  <tr>
-   <th style="text-align:left;"> Response </th>
-   <th style="text-align:right;"> Count </th>
-  </tr>
- </thead>
-<tbody>
-  <tr>
-   <td style="text-align:left;"> 0 </td>
-   <td style="text-align:right;"> 30611 </td>
-  </tr>
-  <tr>
-   <td style="text-align:left;"> 1 </td>
-   <td style="text-align:right;"> 6063 </td>
-  </tr>
-</tbody>
-</table>
-
-test set
-
-<table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;">
- <thead>
-  <tr>
-   <th style="text-align:left;"> Response </th>
-   <th style="text-align:right;"> Count </th>
-  </tr>
- </thead>
-<tbody>
-  <tr>
-   <td style="text-align:left;"> 0 </td>
-   <td style="text-align:right;"> 12826 </td>
-  </tr>
-  <tr>
-   <td style="text-align:left;"> 1 </td>
-   <td style="text-align:right;"> 2593 </td>
-  </tr>
-</tbody>
-</table>
-
-Using `n_ahead=28`, the performances of four different classifiers can be
-visualized as ROC curves. Here, thick transparent lines are the results using
-Facebook data, and thin lines are those excluding Facebook data.
-
-![](figures/for_v1_report/ROC_county_notweighted.png){width=80%}
-
-And population weighted:
-
-![](figures/for_v1_report/ROC_county_weighted.png){width=80%}
-
-The precision-recall plot:
-
-![](figures/for_v1_report/ROCPR_county.png){width=80%}
-
-And the precision-recall plot considering a logged x axis:
-
-![](figures/for_v1_report/ROCPR_county_log.png){width=80%}
-
-Now, choosing a summary statistic to measure the *advantage* in performance
-using Facebook data, we'll calculate *difference* in the area under the curve
-(AUC) between the two versions, for each classifier, as a function of **how far
-ahead hotspots are defined as** i.e. for a range of `n_ahead`, in $\{10, \cdots,
-30\}$:
-
-![](figures/for_v1_report/auc-by-nahead-county.png)
-
-
-## Code
-
-Some variables and functions:
-
-- `lags` are the number of lagged values taken of the JHU cases and FB. Current
-  default is `lags=28`. `slope = TRUE` adds slopes to the feature matrix that is composed by lagged values
-- `n_ahead` is the number of days we want to look ahead, in forming the response
-  data (0 or 1) for hotspot detection. Current default choice is `n_ahead=28`.
-- We compare the $\bar y_2$ average of 1 week period ending `n_ahead` days from
-  *now*, to the average $\bar y_1$ of the past 1 week period (again, from
-  *now*). 
-- We deem one time & region a "hotspot" if $\bar y_1$ is larger than $\bar y_2$
-  by `threshold` percent (25\%).
-- `covidcast_signals()` from the R package `covidcast` allows the data
-  collection of multiple sources.
-- `read_to_model()` further cleans + readies the data into a $y|X$ type matrix,
-  to feed into functions like `glmnet()`.
-- all the results are for `onset = FALSE`. If `onset = TRUE`, a hotspot (from the definition of our response variable) will only be considered a hotspot if it has not been a hotspot recently. 
-
-First, we download and form the data.
-
-```{r form-data, eval=TRUE}
-## Setup
-lags = 28
-n_ahead = 28 ## 28
-threshold = 0.25
-geo_type = "state" ## or "county"
-response = "confirmed_7dav_incidence_prop"
-fn_response = response_diff_avg_1week_min20
-fn_response_name = "response_diff_avg_1week_min20"
-slope = TRUE
-onset = FALSE
-split_type = "geo"
-
-## Read in data once
-data_sources = c("indicator-combination", 
-                 "fb-survey")
-signals = c("confirmed_7dav_incidence_prop", 
-            "smoothed_hh_cmnty_cli")
-start_day = as.Date("2020-05-01")
-end_day = as.Date("2020-08-30")
-signals = data.frame(data_sources = data_sources, signals = signals)
-suppressMessages({
-  mat = covidcast_signals(signals,
-                          start_day = start_day, end_day = end_day, geo_type = geo_type)
-})
-mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
-
-## Form the y|X matrix
-t0 <- Sys.time()
-t0
-df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
-Sys.time() - t0
-df_model %>% names() %>% print()
-## save(df_model, mat, s, n_ahead, threshold, geo_type, response, fn_response, fn_response_name, slope, onset, split_type,
-##      file = file.path(outputdir, "data-county.Rdata"))
-## load(file = file.path(outputdir, "data-county.Rdata"))
-
-## Further split into training and test
-splitted <- stratified_sample_split_geo(df_model, pct_test = 0.3)
-
-## See the distribution of 1's and 0's
-df_model %>% select(resp) %>% table() %>% print()
-splitted$df_train %>% select(resp) %>% table() %>% print()
-splitted$df_test %>% select(resp) %>% table() %>% print()
-
-foldid <- make_stratified_foldid_geo(splitted$df_train, nfold = 5)
-for(ifold in 1:5){
-  splitted$df_train[which(foldid==ifold),] %>% select(resp) %>% table() %>% print()
-}
-```
-
-Now, fit the hot-spot models and visualize the model performances.
-
-```{r make-plots, eval=TRUE}
-make_plots(destin = outputdir,
-           splitted, lags, n_ahead, geo_type, fn_response_name, threshold, slope, split_type, onset, geo_cv_split_seed)
-```
-
-Also visualize the 1's and 0's in the state level data (highlighting by each CV
-fold *and* test data, in different color boxes):
-
-```{r viz-response, eval=TRUE, fig.width=10, fig.height=30}
-## geos = df_model %>% select(geo_value) %>% unlist() %>% unique()
-geo_split_seed = 100
-geo_cv_split_seed = 10000
-nfold = 5 
-foldid <- make_foldid_geo(splitted$df_train, nfold = nfold, seed = geo_cv_split_seed)
+## Also split CV folds.
+nfold = 5
+foldid <- make_stratified_foldid_geo(splitted$df_train, nfold = nfold, seed = 0)
 state_splits = lapply(1:nfold, function(ifold)
   splitted$df_train[which(foldid==ifold),] %>% select(geo_value) %>% unlist() %>% unique())
-nn1 = 14
-nn2 = 4
-par(mfrow = c(nn1, nn2)); par(mar = c(3, 3, 1, 1)); par(cex=.7)
-## iilist = 1:length(geos)
-geos = lapply(1:nfold, function(ifold){
+
+## Setup the plot.
+par(mfrow = c(13, 4)); par(mar = c(3, 3, 1, 1)); par(cex=.7)
+
+## Collect the geo values, in a particular order
+train_geos = lapply(1:nfold, function(ifold){
   splitted$df_train[which(foldid==ifold),] %>% select(geo_value) %>% unique()}) %>%
   unlist()
 test_geos = splitted$df_test %>% select(geo_value) %>% unlist() %>% unique()
-geos = c(geos, test_geos)
+geos = c(train_geos, test_geos)
+
+
+## Make the individual plots
 for(geo in geos){
 
   ## Form the response data (0's and 1's) for all geos
@@ -381,5 +136,162 @@ for(geo in geos){
   }
   legend("topright", legend = paste0("\nfold ", splitnum),
          bty="n", cex=2) 
+}
+```
+
+We can see that the 0's and 1's are evenly distributed, with somewhat imbalanced
+class labels -- about 14\% of data being 1's and 86\% being 0's.
+
+```{r distr-response, eval=TRUE, results = "asis"}
+all_tbl = df_model %>% select(resp) %>% table() ##%>% knitr::kable() %>% print()
+train_tbl = splitted$df_train %>% select(resp) %>% table() ##%>% knitr::kable() %>% print() 
+test_tbl = splitted$df_test %>% select(resp) %>% table() ##%>% knitr::kable() %>% print() 
+all_folds_tbl = lapply(1:nfold, function(ifold){
+  splitted$df_train[which(foldid==ifold),] %>% select(resp) %>% table() ##%>% knitr::kable() %>% print() 
+})
+cv_folds_tbl = do.call(cbind, all_folds_tbl)
+colnames(cv_folds_tbl) = paste0("fold", 1:nfold)
+
+tab = cbind(all = all_tbl,
+            train = train_tbl,
+            train = test_tbl,
+            cv_folds_tbl)
+tab = rbind(tab, "Proportion of 1's"= apply(tab, 2, function(a)a[2]/(a[1]+a[2])))
+tab %>% knitr::kable(digits=2) %>% print()
+```
+
+## Results
+
+First, download and form data:
+
+```{r form-data, eval=TRUE}
+obj_state = get_data(geo_type = "state")
+obj_county = get_data(geo_type = "county")
+```
+
+Save the results:
+```{r save-data, eval=FALSE}
+save(obj_state, file=file.path(outputdir, "state-hotspot-data.Rmd"))
+save(obj_county, file=file.path(outputdir, "county-hotspot-data.Rmd"))
+```
+
+Load them:
+```{r load-data, eval=FALSE}
+load(file=file.path(outputdir, "state-hotspot-data.Rmd"))
+load(file=file.path(outputdir, "county-hotspot-data.Rmd"))
+```
+
+Now, we fit the hot-spot model at and visualize the model performances.
+
+The performances of three different classifiers can be visualized as receiver
+operating characteristic (ROC) curves. Here, thick transparent lines are the
+results using Facebook data, and thin solid lines are those *excluding* Facebook
+data (only using JHU data). 
+
+**Two plots (the first is for state level data, and second is for county level
+data ) are repeated five times** each different random seeds for the
+training/test split and CV split.
+
+```{r make-plots, eval=TRUE, fig.width=7, fig.height=7}
+for(iseed in 0:4){
+  print(paste0("Random seed" = iseed))
+  for(geo_type in c("state", "county")){
+    if(geo_type == "state") list2env(obj_state, envir = globalenv())
+    if(geo_type == "county") list2env(obj_county, envir = globalenv())
+    splitted = stratified_sample_split_geo(df_model, pct_test = 0.3, seed = 100+iseed)
+    response = "confirmed_7dav_incidence_prop"
+    plots = make_plots(destin = outputdir, splitted, lags, n_ahead, geo_type,
+                       response, fn_response_name, threshold, slope, onset,
+                       geo_cv_split_seed = 0+iseed)
+    print(plots$roc)
+  }
+}
+```
+
+Next up: Choosing a summary statistic to measure the *advantage* in performance
+using Facebook data, we'll calculate *difference* in the area under the curve
+(AUC) between the two versions, for each classifier, as a function of **how far
+ahead hotspots are defined as** i.e. for a range of `n_ahead`, in $\{10, \cdots,
+30\}$.
+
+
+## Extra: diagnostics
+
+We perform some simple diagnostics at the state level.
+
+The predicted probabilities are concentrated near 0 and 1.
+
+```{r diagnostics-1, fig.width=12, fig.height=4}
+list2env(obj_state, envir = globalenv())
+splitted = stratified_sample_split_geo(df_model, pct_test = 0.3, seed = 100)
+preds = make_preds(destin = outputdir, splitted, lags, n_ahead, geo_type,
+                   response, fn_response_name, threshold, slope, onset,
+                   geo_cv_split_seed = 0,
+                   include_fb = TRUE)
+par(mfrow=c(1,3))
+hist(preds %>% select(contains("lasso"))%>% unlist(), col='grey80', xlab = "", main=paste0("lasso predicted probabilities"))
+hist(preds %>% select(contains("ridge"))%>% unlist(), col='grey80', xlab = "", main=paste0("ridge predicted probabilities"))
+hist(preds %>% select(contains("xgb"))%>% unlist(), col='grey80',   xlab = "", main=paste0("xgb predicted probabilities"))
+```
+
+The predicted probabilities by test label:
+
+```{r diagnostics-2, fig.width=12, fig.height=4}
+par(mfrow=c(1,3))
+testmat = cbind(preds=preds, resp= splitted$df_test$resp) %>% as_tibble()
+for(model in c("lasso", "ridge", "xgb")){
+  res = list("0" = testmat %>% subset(resp==0) %>% select(contains(model)) %>% unlist(),
+             "1" = testmat %>% subset(resp==1) %>% select(contains(model)) %>% unlist())
+  boxplot(res, xlab = "Test Labels\n(Hotspots are 1's)",
+          ylab = "Predicted prob.",
+          main = paste0("Test set performance (", model, ")"))
+}
+```
+
+Let's see predicted probabilities (thick colored lines lines) in test sets
+overlaid with the JHU case counts (red points are hot spots).
+
+We'll repeat this five times for analyses with different random seeds for
+training/test data split and CV fold splits, to try to cover more states.
+
+```{r diagnostics-3, fig.width=10, fig.height=30, echo=TRUE}
+models = c("lasso", "ridge", "xgb")
+predcols = RColorBrewer::brewer.pal(3, "Set2")
+names(predcols) = models
+for(iseed in 0:4){
+  splitted = stratified_sample_split_geo(df_model, pct_test = 0.3, seed = 100+iseed)
+  preds = make_preds(destin = outputdir, splitted, lags, n_ahead, geo_type,
+                     response, fn_response_name, threshold, slope, onset,
+                     geo_cv_split_seed = iseed,
+                     include_fb = TRUE)
+  res = full_join(splitted$df_test %>% select(geo_value, time_value, resp, val=contains("lag0_confirmed")),
+                  preds) %>% as_tibble()
+  splitted$df_test %>% select(time_value) %>% summary()
+  preds %>% select(time_value) %>% summary()
+  par(mfrow=c(8, 2))
+  par(mar=c(3,4,1,1))
+  par(oma=c(0,0,10,0))
+  one_geo_diagnose <- function(df,...){
+    plot(y=df$val, x=df$time_value, type='o',
+         col=df$resp+1, pch=16,ylim=c(0,70),
+         xlab = "Time",
+         ylab="JHU Household \n Case Proportions")
+    abline(h=seq(from=0,to=200, by=5), col='grey80', lty=2)
+    thisgeo = df$geo_value %>% unlist() %>% unique()%>%toupper()
+    legend("topleft", legend = thisgeo, bty="n", cex=2)
+    for(model in models){
+      lines(x=df$time_value, y=(df%>%select(contains(model))%>%unlist())*10, col=predcols[model], lwd=2)
+    }
+    ## if(thisgeo=="AK"){
+    ## } 
+    return()
+  }
+  res %>%
+    group_by(geo_value) %>%
+    group_map(one_geo_diagnose, keep=TRUE) -> dummy_obj
+  mtext(paste0("Random seed=", iseed),
+        side = 3, outer=TRUE)
+  legend("topright", lwd=2, col=predcols,
+         legend=paste0("Predicted prob (x10) of ", models), bg="white")
 }
 ```
