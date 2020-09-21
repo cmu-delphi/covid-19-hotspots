@@ -21,8 +21,8 @@ library(glmnet)
 source("helpers.r")
 
 ## Location of your covidcast R package.
-## load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
- load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast")
+load_all("/home/shyun/repos/covidcast/R-packages/covidcast")
+ ## load_all("~/Desktop/CMU/Projects/Delphi-Covid-19/delphi_repos/covidcast/R-packages/covidcast")
 
 ## Location to print plots to
 outputdir = "./figures"
@@ -71,6 +71,18 @@ df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, thr
 df_model %>% names() %>% print()
 ```
 
+(The following plot is in response to Vishnu's question.)
+
+```{r see-slope-against-arizona-case-count}
+df_model %>% subset(geo_value=="az") %>% select( slope="feature_slope9_confirmed_7dav_incidence_prop_indicator-combination",
+                                             ## contains("slope"),
+                                                val="feature_lag0_confirmed_7dav_incidence_prop_indicator-combination",
+                                                time_value) -> azmat
+names(df_model)
+matplot(y=azmat%>% select(contains("slope"))%>%as.matrix(), x=azmat%>%select(time_value)%>% unlist(), type='l', ylim=c(-2,2))
+lines(y=azmat%>% select(val)%>%unlist() %>% scale(), x=azmat%>%select(time_value)%>% unlist(), type='l', lwd=10)
+```
+
 ## Main code
 
 This is the barebones code for doing logistic lasso prediction on state level
@@ -81,7 +93,6 @@ data. The reader should double-check this code for any mistakes.
 ## Now take one split
 geo_split_seed = 100
 geo_cv_split_seed = 10000
-source('helpers.r')
 splitted <- sample_split_geo(df_model, pct_test = 0.3, seed = geo_split_seed)
 
 ## See the distribution of 1's and 0's
@@ -197,19 +208,19 @@ Let's see predicted probabilities (thick green lines) overlaid with the JHU case
 counts (red points are hot spots).
 
 ```{r diagnostics-3, fig.width=8, fig.height=12, echo=FALSE}
-res = cbind(df_test %>% select(geo_value, time_value, resp, val=contains("lag0_smoothed_hh")), preds)
+res = cbind(df_test %>% select(geo_value, time_value, resp, val=contains("lag0_confirmed")), preds)
 par(mfrow=c(5, 3))
 par(mar=c(3,4,1,1))
 one_geo_diagnose <- function(df,...){
   plot(y=df$val, x=df$time_value, type='o',
-       col=df$resp+1, pch=16,ylim=c(0,50),
+       col=df$resp+1, pch=16,ylim=c(0,70),
        xlab = "Time",
        ylab="JHU Household \n Case Proportions")
   abline(h=seq(from=0,to=200, by=5), col='grey80', lty=2)
   thisgeo = df$geo_value %>% unlist() %>% unique()%>%toupper()
   legend("topleft", legend = thisgeo, bty="n", cex=2)
   lines(x=df$time_value, y=df$preds*10, col='green', lwd=2)
-  if(thisgeo=="AZ") legend("topright", lwd=2, col='green', legend="Predicted prob (times 10)")
+  if(thisgeo=="AZ") legend("topright", lwd=2, col='green', legend="Predicted prob (times 10)", bg="white")
   return()
 }
 res %>%
