@@ -12,17 +12,17 @@ add_NAval_missing_dates <- function(df){
   df$time_value <- as.Date(df$time_value)
   ## for each source-signal-geo_value, add missing dates with NA's in the value column
   df %>% group_by(data_source, signal, geo_value) %>% group_modify(function(df_one,...){
-
+    
     ## if there is no datapoints for this combination of source-signal-geo_value, return empty dataset
     if(nrow(df_one)==0) return(data.frame())
-
+    
     ## selects dates that do not have available signal value
     seq_days <- seq(min(df_one$time_value), max(df_one$time_value), "days")
     temp_dates <- seq_days[!(seq_days %in% unique(df_one$time_value))]
-
+    
     ## if all dates are available, return input dataframe
     if(length(temp_dates) == 0) return(df_one)
-
+    
     ## join inputed data frame with a dataframe only with time column, where the times are the ones that are missing from the inputted dataset
     return(full_join(df_one, data.frame(time_value = as.Date(temp_dates)), c("time_value")) %>% arrange(time_value))
   })
@@ -44,26 +44,26 @@ add_NAval_missing_dates <- function(df){
 lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
   ## Basic checks
   stopifnot(length(lags) == 1 & lags >= 1)
-
+  
   ## The fixed number of time lags for the data values themselves.
   df <- df %>% arrange(time_value)
   signal <- df$value
   timestamp <- df$time_value
-
+  
   ## if you want more lags than available points, returns empty dataframe
   len <- nrow(df)
   lags_val = 5
   if(len <= max(lags, lags_val)){
     return(data.frame())
   }
-
+  
   ## make sure timestamp is in date formate
   if(!is.Date(timestamp)) timestamp <- as.Date(timestamp)
-
+  
   ## TODO if there's NA in signal, treat it BEFORE creating lagged matrix. needs helper function.
   ## I think it's reasonable to interpolate the TS as long as there are not many sequential missing obs
   ## low priority
-
+  
   out <- data.frame(time_value = timestamp)
   
   ################################################################
@@ -75,7 +75,7 @@ lagged_features_onegeo <- function(df, lags, name = "feature",slopes = FALSE){
     out <- suppressMessages(bind_cols(out, c(rep(NA,i), signal[inds])))
   }
   names(out) = c("time_value", paste(name, "_lag", 0:lags_val, sep = ""))
-
+  
   #############################################
   ## adding slopes feature every 3 points #####
   #############################################
@@ -145,17 +145,17 @@ get_slope <- function(inds, signal){
 response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg, threshold, onset = FALSE,...){
   signal <- df$value
   timestamp <- df$time_value
-
+  
   ## we can only determine a hotspot n_ahead days if that day is available
   len <- nrow(df)
   stopifnot(n_ahead <= len)
-
+  
   ## make sure timestamp is in date format
   if(!is.Date(timestamp)) timestamp <- as.Date(timestamp)
-
+  
   ## TODO if there's NA in signal, treat it BEFORE creating response. needs helper function.
   ## it's reasonable to interpolate the TS as long as there are not many sequential missing obs
-
+  
   out <- data.frame(time_value = timestamp[1:(len-n_ahead+1)])
   out$resp <- NA
   ## for the points that have n_ahead points available, compute hotspot based on the values available
@@ -163,7 +163,7 @@ response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg, thresh
   for(i in 1:(len-n_ahead+1)){
     out$resp[i] <- fn_response(signal[1:(i+n_ahead)], i, threshold, ...)
   }
-
+  
   if(onset){
     ## Go back (up to 60 days), and if x% of 14 previous days were a hot spot,
     ## don't deem as hotspot. Use default of x=70%
@@ -177,7 +177,7 @@ response_onegeo <- function(df, n_ahead, fn_response = response_diff_avg, thresh
     out$resp = out$resp_new
     ## If you're coding and you need a break, see this: https://xkcd.com/2346/
   }
-
+  
   return(out)
 }
 
@@ -305,8 +305,8 @@ add_geoinfo <- function(df_all, geo_type){
   }
   if(geo_type == "msa"){
     return(inner_join(df_all, msa_census %>%
-             transmute(geo_value = as.character(CBSA),
-                       population = POPESTIMATE2019), by = "geo_value"))
+                        transmute(geo_value = as.character(CBSA),
+                                  population = POPESTIMATE2019), by = "geo_value"))
   }
 }
 
@@ -335,23 +335,23 @@ ready_to_model <- function(mat, lags, n_ahead,
                            slope = FALSE, fn_response = response_diff_avg_1week,
                            threshold = .25,
                            onset = FALSE){
-
+  
   ## Construct lagged features for all available signals, including lagged responses
   # TODO deal with potential NAs?
   features <- mat %>% plyr::ddply(c("signal", "data_source", "geo_value"),
                                   lagged_features_onegeo, lags = lags, slope = slope) %>% na.omit()
-
+  
   ## Construct hotspot indicator in the resp variable
   responses <- mat %>% filter(signal == response) %>%
     plyr::ddply(c("signal", "data_source", "geo_value"), response_onegeo,
                 n_ahead = n_ahead, fn_response = fn_response, threshold = threshold,
                 onset = onset) %>% na.omit()
-
+  
   ## transform the dataframe in a wide format, with one row per geo_value and date
   names_to_pivot <- colnames(features %>% select(-geo_value, -time_value, -signal, -data_source))
   features <- pivot_wider(features, id_cols = c("geo_value", "time_value"), names_from = c("signal", "data_source"),
                           values_from = all_of(names_to_pivot)) %>% ungroup
-
+  
   ## join features and response
   mat_to_model <- inner_join(features, responses %>% select(-signal, -data_source),
                              by = c("geo_value", "time_value")) %>% na.omit()
@@ -399,7 +399,7 @@ stratified_sample_split_geo <- function(df_model, pct_test = 0.3, seed=NULL){
 ##'
 ##' @return List containing \code{df_train} and \code{df_test}.
 sample_split_geo <- function(df_model, pct_test = 0.3, seed=NULL){
-
+  
   ## df_tomodel <- df_tomodel %>% arrange(desc(time_value)) %>% na.omit()
   ## start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"geo_value"]
   ## start_test_date <- df_tomodel[round(pct_test*nrow(df_tomodel)),"geo_value"]
@@ -410,28 +410,28 @@ sample_split_geo <- function(df_model, pct_test = 0.3, seed=NULL){
   train_geos = geos[-test_ind]
   df_test <- df_model %>% filter(geo_value %in% test_geos)
   df_train <- df_model %>% filter(geo_value %in% train_geos)
-
+  
   stopifnot(intersect(
-      df_test %>% select(geo_value) %>% unique() %>% unlist(),
-      df_train %>% select(geo_value) %>% unique() %>% unlist()) %>% length() == 0)
-
+    df_test %>% select(geo_value) %>% unique() %>% unlist(),
+    df_train %>% select(geo_value) %>% unique() %>% unlist()) %>% length() == 0)
+  
   ## Todo: check if train and test have equal number of hot spots. Doesn't seem
   ## to be a big problem since we are naively splitting geos, but still..
-
+  
   ## ## Helper to calculate rise from June to July
   ## howmuchrise <- function(val, time){
   ##  mean(val[time >= "2020-7-26"]) - mean(val[time <= "2020-6-06"])
   ## }
-
+  
   ## ## Sort all the rises
   ## rises = mat %>%
   ##   group_by(geo_value) %>%
   ##   dplyr::summarise(rise = howmuchrise(value, time_value)) %>%
   ##   arrange(desc(rise))
-
+  
   ## ## ## See the numerical summary
   ## ## rises %>% dplyr::select(rise) %>% unlist() %>% summary()
-
+  
   ## ## See the numerical summary
   ## topn = 40
   ## geos = rises %>%  slice_head(n = topn) %>% dplyr::select(geo_value) %>% unlist()
@@ -439,11 +439,11 @@ sample_split_geo <- function(df_model, pct_test = 0.3, seed=NULL){
   ## train_i = sample(topn, topn/5)
   ## train_hotspot_geos = geos[train_i]
   ## test_hotspot_geos = geos[-train_i]
-
+  
   ## ## mat %>% select(contains("geo")) %>% unlist() %>% unique() %>% length()
   ## df_no_hotspot <- df_model %>% filter(!(geo_value %in% geos))
   ## df_yes_hotspot <- df_model %>% filter(geo_value %in% geos)
-
+  
   # Make training set and test set separately
   return(list(df_test = df_test, df_train = df_train))
 }
@@ -453,7 +453,7 @@ sample_split_geo <- function(df_model, pct_test = 0.3, seed=NULL){
 ##' a somewhat even distribution of 0s and 1s among the folds.
 ##'
 make_stratified_foldid_geo <- function(x, nfold, seed=NULL){
-
+  
   if(!is.null(seed)) set.seed(seed)
   nsim = 10000
   for(ii in 1:nsim){
@@ -482,7 +482,7 @@ make_stratified_foldid_geo <- function(x, nfold, seed=NULL){
 #' @return A numeric vector containing elements of \code{(1:nfold)} specifying
 #'   row numbers of X (or entry numbers of y) to be used for each CV fold.
 make_foldid_geo <- function(x, nfold, seed=NULL){
-
+  
   ## Validation_geos.
   geos = x %>% select(geo_value) %>% unlist()
   unique_geos = geos %>% unique() %>% sort()
@@ -492,17 +492,17 @@ make_foldid_geo <- function(x, nfold, seed=NULL){
   cv_inds = lapply(1:nfold, function(ifold){
     which(geos %in% geo_blocks[[ifold]])
   })
-
+  
   final_inds = rep(NA, length(geos))
   for(ifold in 1:nfold){
     inds = cv_inds[[ifold]]
     final_inds[inds] = ifold
   }
-
+  
   ## Quick test before returning
   stopifnot(all((x[which(final_inds==1),] %>%
-                select(geo_value) %>%
-                unique() %>% unlist()) %in% geo_blocks[[1]]))
+                   select(geo_value) %>%
+                   unique() %>% unlist()) %in% geo_blocks[[1]]))
   return(final_inds)
 }
 
@@ -516,21 +516,21 @@ make_foldid_geo <- function(x, nfold, seed=NULL){
 #' @return A numeric vector containing elements of \code{(1:nfold)} specifying
 #'   row numbers of X (or entry numbers of y) to be used for each CV fold.
 make_foldid <- function(x, nfold){
-
+  
   ## The fold ids need to be made temporal
   times = x %>% select(time_value) %>% unlist() %>% as_date()
   unique_sorted_times = times %>% unique() %>% sort()
-
+  
   endpoints = round(seq(from = 0, to = length(unique_sorted_times), length = nfold+1))
   inds = Map(function(a,b){(a+1):b},
              endpoints[-length(endpoints)],
              endpoints[-1])
   time_blocks = lapply(inds, function(ind){ unique_sorted_times[ind]})
-
+  
   cv_inds = lapply(1:nfold, function(ifold){
     which(times %in% time_blocks[[ifold]])
   })
-
+  
   final_inds = rep(NA, length(times))
   for(ifold in 1:nfold){
     inds = cv_inds[[ifold]]
@@ -554,9 +554,9 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
                                stratify_cv_split = TRUE,
                                verbose = FALSE){
   if(verbose) cat("Fitting models:\n")
-
+  
   predictions <- df_test %>% select(geo_value, time_value, resp)
-
+  
   if(verbose) cat("\tFitting LASSO...")
   suppressMessages({
     preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1, geo_cv_split_seed = geo_cv_split_seed,
@@ -564,10 +564,10 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   })
   predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   if(verbose) cat(" Done!\n")
-
-
+  
+  
   ## Note: only using lasso for now.
-
+  
   if(verbose) cat("\tFitting Ridge...")
   suppressMessages({
     preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0, geo_cv_split_seed = geo_cv_split_seed,
@@ -575,21 +575,21 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   })
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   if(verbose) cat(" Done!\n")
-
+  
   ## cat("\tFitting SVM...")
   ## preds <- fit_svm(df_train, df_test)
   ## predictions[[paste("svm_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   ## cat(" Done!\n")
-
+  
   if(verbose) cat("\tFitting xgboost...")
   suppressMessages({
     preds <- fit_xgb(df_train, df_test)
   })
   predictions[[paste("xgb_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
   if(verbose) cat(" Done!\n")
-
+  
   ### can add more models here!!! add \hat{y} as a col to |predictions|
-
+  
   return(predictions)
 }
 
@@ -620,24 +620,24 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
 fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1,
                                     geo_cv_split_seed = NULL,
                                     stratify_cv_split = TRUE){
-
+  
   ## Input checks (should be common for all fit_OOOO() functions
   stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_train)))
   stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_test)))
-
+  
   ## Input check
   stopifnot(alpha %in% c(0,1)) ## Only allow ridge or lasso for now.
-
+  
   ## (Not used for now) Make contiguous time blocks for CV
   ## foldid <- make_foldid(df_train, nfold)
-
+  
   ## Split by geo
   if(stratify_cv_split){
     foldid <- make_stratified_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
   } else {
     foldid <- make_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
   }
-
+  
   ## Main part of the lasso fitting and predicting
   fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
                          y = df_train$resp,
@@ -647,10 +647,10 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1,
                          nfold = nfold)
   preds = predict(fit_lasso, s = "lambda.min",
                   newx = as.matrix(df_test %>% select(-geo_value, -time_value, -resp)), type = "response")[,1]
-
+  
   ## Out checks (should be common for all fit_OOOO() functions)
   stopifnot(length(preds) == nrow(df_test))
-
+  
   preds
 }
 
@@ -664,17 +664,17 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1,
 ##'
 ##' @return Numeric vector the same length as \code{nrow(df_test)}.
 fit_svm <- function(df_train, df_test, ...){
-
+  
   ## Input checks (should be common for all fit_OOOO() functions
   stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_train)))
   stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_test)))
-
+  
   ## Fit SVM and make predictions
   train_mat <- df_train %>% select(-geo_value, -time_value)
   test_mat <- df_test %>% select(-geo_value, -time_value)
   model <- e1071::svm(resp ~ ., data = train_mat, probability = TRUE, ...)
   preds <- predict(model, test_mat)
-
+  
   ## Next: replace with faster SVM: https://cran.r-project.org/src/contrib/Archive/RSofia/
   ## ## Also might be useful: multicore, faster radial SVM with CV?
   ## library(caret)
@@ -683,10 +683,10 @@ fit_svm <- function(df_train, df_test, ...){
   ## model <-  train(Species ~ ., data = iris, method="svmRadial",
   ##     trControl=trainControl(method='cv', number=10)) ## This CV is not great..
   ## confusionMatrix(model)
-
+  
   ## Out checks (should be common for all fit_OOOO() functions)
   stopifnot(length(preds) == nrow(df_test))
-
+  
   preds
 }
 
@@ -703,17 +703,17 @@ fit_svm <- function(df_train, df_test, ...){
 ##'
 ##' @return Numeric vector the same length as \code{nrow(df_test)}.
 fit_xgb <- function(df_train, df_test){
-
+  
   ## Input checks (should be common for all fit_OOOO() functions
   stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_train)))
   stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_test)))
-
-
+  
+  
   ## transforms dataframe to XGBoost data format
   dtrain <- xgb.DMatrix(as.matrix(df_train %>% dplyr::select(-resp, -geo_value, -time_value)),
                         label = as.vector(df_train$resp))
   dtest <- xgb.DMatrix(as.matrix(df_test %>% dplyr::select(-resp, -geo_value, -time_value)),
-                        label = as.vector(df_test$resp))
+                       label = as.vector(df_test$resp))
   ## Fit xgboost and make predictions
   mod <- xgb.train(booster = "gbtree",
                    data = dtrain,
@@ -726,12 +726,12 @@ fit_xgb <- function(df_train, df_test){
                    objective = "binary:logistic",
                    colsample_bytree = 0.7,
                    subsample = 0.7)
-
+  
   preds <- predict(mod, dtest)
-
+  
   ## Out checks (should be common for all fit_OOOO() functions)
   stopifnot(length(preds) == nrow(df_test))
-
+  
   preds
 }
 
@@ -750,39 +750,39 @@ fit_xgb <- function(df_train, df_test){
 ##'
 ##' @return Numeric vector the same length as \code{nrow(df_test)}.
 fit_random_forest <- function(df_train, df_test, ...){
-
+  
   ## Input checks (should be common for all fit_OOOO() functions
   stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_train)))
   stopifnot(all(c("time_value", "geo_value", "resp") %in% colnames(df_test)))
-
-
+  
+  
   train_mat <- df_train %>% select(-geo_value, -time_value)
   test_mat <- df_test %>% select(-geo_value, -time_value)
-
+  
   ## X and y matrix for randomForest() function.
   X = train_mat %>% select(-resp)
   y = train_mat %>% select(resp) %>% unlist()
-
+  
   ## Tip: start small, and scale up slowly.
   ## rf = randomForest(X, y,sampsize=1000, ntree=5)
   ## print(rf)
   rf = randomForest(X, y, sampsize = 5000, ntree = 500)
   print(rf)
-
-
+  
+  
   ## (not written yet)
   test_X = test_mat %>% select(-resp)
   preds <- predict(model, newdata = test_X, type = "prob")
-
+  
   ## This seems like a good quick R random forest guide:
   ## https://stackoverflow.com/questions/46124424/how-can-i-draw-a-roc-curve-for-a-randomforest-model-with-three-classes-in-r
-
+  
   ## This is about how to speed it up:
   ## https://stackoverflow.com/questions/34706654/get-randomforest-regression-faster-in-r
-
+  
   ## Out checks (should be common for all fit_OOOO() functions)
   stopifnot(length(preds) == nrow(df_test))
-
+  
   preds
 }
 
@@ -833,13 +833,13 @@ adapted_roc_onemodel <- function(df_one,...){
     df_temp <- df_one
     ## binary predictions for the cutoff
     df_temp$pred <- ifelse(df_temp$value<=i, 0, 1)
-
+    
     wprecision = (df_temp %>% filter(pred == 1, resp == 1) %>% summarise(sum(population)) %>% unlist)/(df_temp %>% filter(pred == 1) %>% summarise(sum(population)) %>% unlist)
     if((df_temp %>% filter(pred == 1) %>% summarise(sum(population)) %>% unlist) == 0) wprecision = 1
-
+    
     wrecall = (df_temp %>% filter(pred == 1, resp == 1) %>% summarise(sum(population)) %>% unlist)/(df_temp %>% filter(resp == 1) %>% summarise(sum(population)) %>% unlist)
     if((df_temp %>% filter(resp == 1) %>% summarise(sum(population)) %>% unlist) == 0) wrecall = 1
-
+    
     ## computing weighted % of predicted 1's
     wpred1 =(df_temp %>% filter(pred == 1) %>% summarise(sum(population)) %>% unlist)/sum(df_temp$population)
     return(c(i, wpred1, wprecision, wrecall))
@@ -863,24 +863,24 @@ plot_adapted_roc <- function(predictions, geo_type = "county", add = FALSE, df_p
   df_temp <- inner_join(predictions, get_population(geo_type), by = "geo_value")
   df_temp <- reshape2::melt(df_temp, id.vars = c("geo_value", "time_value", "resp", "population"))
   df_plot <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(adapted_roc_onemodel)
-
+  
   precision_thresh <- df_temp %>% select(resp, population, geo_value, time_value) %>%
     distinct() %>% filter(resp == 1) %>%
     summarise(sum(population)/sum(df_temp$population), .groups = 'drop') %>%
     unlist()
-
+  
   if(!add){
     ggplot(df_plot, aes(x = wpred1, color = model)) +
       geom_vline(xintercept = precision_thresh, size = 1.25, col = "gray30", alpha = .8) +
       geom_line(aes(y = wprecision, linetype ="wprecision", size = "LaggedResponse", alpha = "LaggedResponse")) +
       geom_line(aes(y = wrecall, linetype = "wrecall", size = "LaggedResponse", alpha = "LaggedResponse")) +
       scale_linetype_manual(name = "",
-                         values = c( "wprecision" = 1, "wrecall" = 2),
-                         labels = c("Precision", "Recall")) +
+                            values = c( "wprecision" = 1, "wrecall" = 2),
+                            labels = c("Precision", "Recall")) +
       scale_size_manual(name = "",
-                            values = c( "LaggedResponse" = 0.5, "FbFeatures" = 1.5)) +
+                        values = c( "LaggedResponse" = 0.5, "FbFeatures" = 1.5)) +
       scale_alpha_manual(name = "",
-                        values = c( "LaggedResponse" = 1, "FbFeatures" = 0.4)) +
+                         values = c( "LaggedResponse" = 1, "FbFeatures" = 0.4)) +
       ylim(0,1) +
       xlim(0,1) +
       theme_bw(base_size = 18) +
@@ -894,7 +894,7 @@ plot_adapted_roc <- function(predictions, geo_type = "county", add = FALSE, df_p
   } else {
     df_plot_existing +
       geom_line(data=df_plot,  aes(x=wpred1, y = wprecision, linetype ="wprecision", size = "FbFeatures", alpha ="FbFeatures")) +
-                     geom_line(data=df_plot, aes(y=wrecall, linetype = "wrecall", size = "FbFeatures", alpha = "FbFeatures"))
+      geom_line(data=df_plot, aes(y=wrecall, linetype = "wrecall", size = "FbFeatures", alpha = "FbFeatures"))
   }
 }
 
@@ -913,7 +913,7 @@ roc_onemodel <- function(df_one, popweighted = FALSE){
     df_temp <- df_one
     ## binary predictions for the cutoff
     df_temp$pred <- ifelse(df_temp$value<=i, 0, 1)
-
+    
     ## specificity
     # pop weighted
     if(popweighted){
@@ -923,7 +923,7 @@ roc_onemodel <- function(df_one, popweighted = FALSE){
       specificity = (df_temp %>% filter(pred == 0, resp == 0) %>% nrow())/(df_temp %>% filter(resp == 0) %>% nrow())
       if((df_temp %>% filter(resp == 0) %>% nrow()) == 0) specificity = 1
     }
-
+    
     ## sensitivity = recall
     # pop weighted
     if(popweighted){
@@ -933,7 +933,7 @@ roc_onemodel <- function(df_one, popweighted = FALSE){
       sensitivity = (df_temp %>% filter(pred == 1, resp == 1) %>% nrow())/(df_temp %>% filter(resp == 1) %>% nrow())
       if((df_temp %>% filter(resp == 1) %>% nrow()) == 0) sensitivity = 1
     }
-
+    
     return(c(i, specificity, sensitivity))
   })
   ## transforming matrix into dataframe and naming it appropriately
@@ -957,13 +957,13 @@ roc_onemodel <- function(df_one, popweighted = FALSE){
 ##'
 ##' @return ggplot of model comparison curve
 plot_roc <- function(predictions, geo_type = "county", add = FALSE, df_plot_existing = NULL, popweighted = FALSE, only_return_auc=FALSE){
-
+  
   df_temp <- inner_join(predictions, get_population(geo_type), by = "geo_value")
   df_temp <- reshape2::melt(df_temp, id.vars = c("geo_value", "time_value", "resp", "population"))
   df_auc <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(function(df, ...){data.frame(auc = round(pROC::auc(response = df$resp, predictor = df$value)[1], 3))})
   if(only_return_auc) return(df_auc)
   df_plot <- df_temp %>% rename(model = variable) %>% group_by(model) %>% group_modify(~roc_onemodel(.x, popweighted = popweighted))
-
+  
   if(!add){
     ggplot(df_plot, aes(x = 1-specificity,y=sensitivity, color = model, size = "LaggedResponse", alpha = "LaggedResponse")) +
       geom_line() +
@@ -995,24 +995,24 @@ make_preds <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
                        fn_response_name, threshold, slope, onset,
                        geo_cv_split_seed = NULL,
                        include_fb = TRUE){
-
+  
   ######################################
   ## Model with lagged responses only ##
   ######################################
   if(!include_fb){
-  predictions_onlylaggedresponse <- fit_predict_models(splitted$df_train %>% select(geo_value, time_value, resp, contains(response)),
-                                                       splitted$df_test %>% select(geo_value, time_value, resp, contains(response)),
-                                                       lags = lags, n_ahead = n_ahead,
-                                                       geo_cv_split_seed = geo_cv_split_seed)
+    predictions_onlylaggedresponse <- fit_predict_models(splitted$df_train %>% select(geo_value, time_value, resp, contains(response)),
+                                                         splitted$df_test %>% select(geo_value, time_value, resp, contains(response)),
+                                                         lags = lags, n_ahead = n_ahead,
+                                                         geo_cv_split_seed = geo_cv_split_seed)
     preds = predictions_onlylaggedresponse
   }
   ####################################################
   ## Model with lagged responses + facebook signals ##
   ####################################################
   if(include_fb){
-  predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test,
-                                                      lags = lags, n_ahead = n_ahead,
-                                                      geo_cv_split_seed = geo_cv_split_seed)
+    predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test,
+                                                        lags = lags, n_ahead = n_ahead,
+                                                        geo_cv_split_seed = geo_cv_split_seed)
     preds = predictions_laggedandfacebook
   }
   return(preds)
@@ -1028,7 +1028,7 @@ make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
                        response,
                        fn_response_name, threshold, slope, onset,
                        geo_cv_split_seed = NULL){
-
+  
   ######################################
   ## Model with lagged responses only ##
   ######################################
@@ -1037,25 +1037,25 @@ make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
                                                        lags = lags, n_ahead = n_ahead,
                                                        geo_cv_split_seed = geo_cv_split_seed)
   a = plot_adapted_roc(predictions_onlylaggedresponse, geo_type = geo_type)
-
+  
   ####################################################
   ## Model with lagged responses + facebook signals ##
   ####################################################
   predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test,
                                                       lags = lags, n_ahead = n_ahead,
                                                       geo_cv_split_seed = geo_cv_split_seed)
-
+  
   b = plot_adapted_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type)
   plot_adj_roc = b
   plotname_root = paste0(geo_type, "__resp_", threshold*100, "__lag_", lags,"__nahead_",
-                            n_ahead, "__slope_", slope,
-                            "__onset_", onset)
+                         n_ahead, "__slope_", slope,
+                         "__onset_", onset)
   plotname_adj_roc = paste0(plotname_root, ".png")
   plotname_roc = paste0(plotname_root, "_ROC", ".png")
   ggsave(plot = b,
          filename = file.path(destin, fn_response_name, plotname_adj_roc),
          width = 12, height = 8, dpi = 200)
-
+  
   ## Also plot regular ROC urves
   a = plot_roc(predictions_onlylaggedresponse, geo_type = geo_type, popweighted = FALSE)
   b = plot_roc(predictions_laggedandfacebook, add=TRUE, df_plot_existing=a, geo_type = geo_type, popweighted = FALSE)
@@ -1077,7 +1077,7 @@ make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
 calc_auc <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
                      fn_response_name, threshold, slope,  onset,
                      geo_cv_split_seed = NULL){
-
+  
   ######################################
   ## Model with lagged responses only ##
   ######################################
@@ -1087,14 +1087,14 @@ calc_auc <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
                                                        geo_cv_split_seed = geo_cv_split_seed,
                                                        verbose=TRUE)
   df_auc_no_fb = plot_roc(predictions_onlylaggedresponse, geo_type = geo_type, popweighted = FALSE, only_return_auc = TRUE)
-
+  
   ####################################################
   ## Model with lagged responses + facebook signals ##
   ####################################################
   predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test, lags = lags, n_ahead = n_ahead,
                                                       geo_cv_split_seed = geo_cv_split_seed)
   df_auc_yes_fb = plot_roc(predictions_laggedandfacebook, geo_type = geo_type, popweighted = FALSE, only_return_auc = TRUE)
-
+  
   ## column_names = paste0(c("no_fb", "yes_fb"), paste0("_n_ahead", n_ahead))
   column_names = c("no_fb", "yes_fb")
   auc_df = df_auc_no_fb %>% bind_cols(df_auc_yes_fb, .id = "model")
@@ -1113,8 +1113,8 @@ get_data <- function(geo_type = "state", lags = 28, n_ahead = 28, threshold = 0.
                      onset = FALSE,
                      start_day = as.Date("2020-05-01"),
                      end_day = as.Date("2020-08-30")
-                     ){
-
+){
+  
   ## Read in data once
   data_sources = c("indicator-combination",
                    "fb-survey")
@@ -1127,7 +1127,18 @@ get_data <- function(geo_type = "state", lags = 28, n_ahead = 28, threshold = 0.
                             start_day = start_day, end_day = end_day, geo_type = geo_type)
   })
   mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
-
+  
+  
+  ## only includes counties that have at most 5% of missing fb survey signals
+  ########################################
+  mat$time_value <- as.Date(tempmat$time_value)
+  geo_pct_missing <- mat %>% filter(data_source == 'fb-survey') %>% plyr::ddply("geo_value", function(df){
+    data.frame(prop_missing = 1 - length(df$time_value)/as.numeric(maxdate - mindate + 1))
+  })
+  geo_include <- geo_pct_missing %>% filter(prop_missing <= 0.05) %>% select(geo_value) %>% unlist()
+  mat <- mat %>% filter(geo_value %in% geo_include)
+  ########################################
+  
   ## Form the y|X matrix
   df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
   return(list(mat = mat,
