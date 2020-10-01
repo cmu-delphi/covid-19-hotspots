@@ -101,14 +101,26 @@ auc_list <- mclapply(1:nn, function(ii){
   ## ## Make a y|X model matrix ready to model, and save it.
   df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
 
-  ## Get AUC for 5 different splits
-  nsim = 5
-  list_of_auc_df = lapply(1:nsim, function(isim){
-    splitted <- stratified_sample_split_geo(df_model, pct_test = 0.3)
+  ## ## Get AUC for 5 different splits
+  ## nsim = 5
+  ## list_of_auc_df = lapply(1:nsim, function(isim){
+  ##   splitted <- stratified_sample_split_geo(df_model, pct_test = 0.3)
+  ##   auc_df = calc_auc(destin = outputdir, splitted, lags, n_ahead, geo_type,
+  ##                     fn_response_name, threshold, slope, split_type, onset)
+  ##   auc_df
+  ## })
+
+  ## NEW: Get AUC for 5 different splits, but cycling over five test data
+  ## splits, instead of five random splits.
+  set.seed(12345)
+  obj <- outer_split(df_model, nfold)
+  list_of_auc_df = lapply(1:(nfold+1), function(ii){
+    splitted <- obj$splitted_list[[ii]
     auc_df = calc_auc(destin = outputdir, splitted, lags, n_ahead, geo_type,
                       fn_response_name, threshold, slope, split_type, onset)
     auc_df
   })
+
 
   ## Take an average
   avg_auc_df = Reduce("+", list_of_auc_df) / length(list_of_auc_df)
