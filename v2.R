@@ -1,5 +1,6 @@
-## A mirror of the script in v1.Rmd
+# A mirror of the script in v1.Rmd
 outputdir = "./figures"
+mc.cores = 1
 
 ##' Parse command line arguments and assigns the values of them. |args| is meant
 ##' to just be additional command line arguments. Something like "Rscript somefile
@@ -33,159 +34,149 @@ mynodename = strsplit(system("scontrol show hostname $SLURM_NODELIST | paste -d,
 mycommand = "sinfo -o '%40N %c' --Node | grep "
 ## mycommand = "sinfo -o '%40N %c' --Node --long | grep "
 mystring = system(paste0(mycommand, mynodename), intern=TRUE)
-mc.cores = 7##as.numeric(strsplit(mystring, "\\s+")[[1]][2])/3
+mc.cores = as.numeric(strsplit(mystring, "\\s+")[[1]][2])/3
 
-
-#######################
-## "read-data" block ##
-#######################
 
 if(FALSE){
-## Setup
-lags = 28
-geo_type = "state"   ## geo_type = "county"
-response = "confirmed_7dav_incidence_prop"
+  for(geo in 1:2){
+    print("geo")
+    print(geo)
 
-## Read in data once
-data_sources = c("indicator-combination",
-                 "fb-survey",
-                 "fb-survey",
-                 "fb-survey",
-                 "fb-survey")
-signals = c("confirmed_7dav_incidence_prop",
-            "smoothed_cli",
-            "smoothed_nohh_cmnty_cli",
-            "smoothed_wcli",
-            "smoothed_hh_cmnty_cli")
-start_day = as.Date("2020-05-01")
-end_day = as.Date("2020-08-25")
-validation_days = seq(end_day-30, end_day, by = "days") ## Old! to be retired soon
+    ## Setup
+    lags = 28
+    ## n_ahead = 21 ## 28
+    threshold = 0.25
+    if(geo==1) geo_type = "county"## "state" ## or "county"
+    if(geo==2) geo_type = "state"## "state" ## or "county"
+    response = "confirmed_7dav_incidence_prop"
+    fn_response = response_diff_avg_1week_min20
+    fn_response_name = "response_diff_avg_1week_min20"
+    slope = TRUE
+    onset = FALSE
+    split_type = "geo"
 
-signals = data.frame(data_sources = data_sources, signals = signals)
-suppressMessages({
-  mat = covidcast_signals(signals,
-                          start_day = start_day, end_day = end_day, geo_type = geo_type)
-})
-mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
+    ## Read in data once
+    data_sources = c("indicator-combination",
+                     "fb-survey")
+    signals = c("confirmed_7dav_incidence_prop",
+                "smoothed_hh_cmnty_cli")
+    start_day = as.Date("2020-05-01")
+    end_day = as.Date("2020-08-30")
+    signals = data.frame(data_sources = data_sources, signals = signals)
+    suppressMessages({
+      mat = covidcast_signals(signals,
+                              start_day = start_day, end_day = end_day, geo_type = geo_type)
+    })
+    mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
 
-## New: instead of validation_days, use validation_geos
-geos = mat %>% select(geo_value) %>% unlist() %>% unique()
-set.seed(1000)
-pct_validation = 0.3
-validation_ind = sample(length(geos), length(geos) * pct_test)
-validation_geos = geos[validation_ind]
-validation_geos = c()
-## save(list=ls(), file=file.path(outputdir, "data-county.Rdata")
-## save(list=ls(), file=file.path(outputdir, "data-state.Rdata")
+    ## ## Form the y|X matrix
+    ## df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
+
+    ## ## save(list=ls(), file=file.path(outputdir, "data-county.Rdata")
+    if(geo==1) filename = "data-county.Rdata"
+    if(geo==2) filename = "data-state.Rdata"
+    save(lags, threshold, geo_type, response, fn_response, fn_response_name,
+         slope, onset, split_type, mat, data_sources, signals, start_day, end_day, signals, mat,
+         file=file.path(outputdir, filename))
+    print("Saved to")
+    print(file.path(outputdir, filename))
+  }
 }
 
-if(geo==1){
-  load(file=file.path(outputdir, "data-county.Rdata"))
-  geo_type = "county"
-}
-if(geo==2){
-  load(file=file.path(outputdir, "data-state.Rdata"))
-  geo_type = "state"
-}
-validation_geos = c() ## No validation set for now.
-source("/scratch/sangwonh/repos/covid-19-hotspots/helpers.r")
-## source("~/repos/covid-19-hotspots/helpers.r")
+if(geo==1)load(file=file.path(outputdir, "data-county.Rdata"))
+if(geo==2)load(file=file.path(outputdir, "data-state.Rdata"))
 
-#####################
-## "analyze" block ##
-#####################
-n_ahead = 28
-threshold = 0.25
-split_type = "geo"
-onset = FALSE
-slope = TRUE
-fn_response <- match.fun("response_diff_avg_1week_min20")
-fn_response_name <- "response_diff_avg_1week_min20"
-
-n_ahead_list = 11:30
+n_ahead_list = 10:30
+if(blocknum==1) n_ahead_list = 10:20
+if(blocknum==2) n_ahead_list = 21:30
 nn = length(n_ahead_list)
-nnlist = nn:1
-preload_df_model = TRUE
-this_nnlist = split(nnlist, ceiling(seq_along(nnlist)/7))[[blocknum]]
-
-
-## Calculate all AUCs
-auc_list <- mclapply(this_nnlist, function(ii){
+if(is.null(mc.cores)) mc.cores = 1
+auc_list <- mclapply(1:nn, function(ii){
 
   n_ahead = n_ahead_list[ii]
-  print(n_ahead)
+  printprogress(n_ahead, 30, "auc_list", fill=TRUE)
+  fn_response <- match.fun("response_diff_avg_1week_min20")
+  fn_response_name <- "response_diff_avg_1week_min20"
 
-  ## Make a y|X model matrix ready to model
-  if(!preload_df_model){
-    df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
-    save(df_model, file = file.path(outputdir, "v2-files", paste0(geo_type, "_n_ahead_", n_ahead, ".Rdata")))
-    return()
-  }
+  ## ## Make a y|X model matrix ready to model, and save it.
+  df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
 
-  ## Instead of the above block, simply load the data.
-  if(preload_df_model){
-    load(file = file.path(outputdir, "v2-files",
-                          paste0(geo_type, "_n_ahead_", n_ahead, ".Rdata")))
-  }
+  ## ## Get AUC for 5 different splits
+  ## nsim = 5
+  ## list_of_auc_df = lapply(1:nsim, function(isim){
+  ##   splitted <- stratified_sample_split_geo(df_model, pct_test = 0.3)
+  ##   auc_df = calc_auc(destin = outputdir, splitted, lags, n_ahead, geo_type,
+  ##                     fn_response_name, threshold, slope, split_type, onset)
+  ##   auc_df
+  ## })
 
-  ## Split into train&test
-  df_traintest <- df_model %>% filter(!(geo_value %in% validation_geos))
-  df_validation <- df_model %>% filter(geo_value %in% validation_geos)
-  splitted <- sample_split_geo(df_traintest, pct_test = 0.3, seed = 102)
+  ## NEW: Get AUC for 5 different splits, but cycling over five test data
+  ## splits, instead of five random splits.
+  set.seed(12345)
+  obj <- outer_split(df_model, nfold)
+  list_of_auc_df = lapply(1:(nfold+1), function(ii){
+    splitted <- obj$splitted_list[[ii]
+    auc_df = calc_auc(destin = outputdir, splitted, lags, n_ahead, geo_type,
+                      fn_response_name, threshold, slope, split_type, onset)
+    auc_df
+  })
 
-  ## source("~/repos/covid-19-hotspots/helpers.r")
-  auc_df = calc_auc(destin = outputdir, splitted, lags, n_ahead, geo_type,
-                    fn_response_name, threshold, slope, split_type, onset)
-  save(auc_df, file = file.path(outputdir, paste0(geo_type, "_auc_n_ahead", n_ahead, ".Rdata")))
+
+  ## Take an average
+  avg_auc_df = Reduce("+", list_of_auc_df) / length(list_of_auc_df)
+  avg_auc_df[["model"]] = list_of_auc_df[[1]][["model"]]
+  auc_df = avg_auc_df
+  save(list_of_auc_df, auc_df, file = file.path(outputdir, paste0(geo_type, "_auc_n_ahead",
+                                                                  n_ahead, ".Rdata")))
+  cat(fill=TRUE)
   return(auc_df)
-}, mc.cores = mc.cores)##pmax(length(nnlist), mc.cores))
+}, mc.cores = mc.cores)
 names(auc_list) = n_ahead_list
-save(auc_list, file = file.path(outputdir, paste0(geo_type, "_auc_all_n_ahead", ".Rdata")))
+save(auc_list, n_ahead_list, file = file.path(outputdir, paste0(geo_type, "_auc_all_n_ahead", ".Rdata")))
 
 
-## Plotting the results
+## Plotting
 if(FALSE){
 
+  ## ## State
+  ## geo_type = "state"
+  ## load(file = file.path(outputdir, paste0(geo_type, "_auc_all_n_ahead", ".Rdata")))
+
   ## County
-  geo_type = "county"
-  geo_type = "state"
-  n_ahead_list = 11:30##round(seq(from=10, to=30, length=nn))
+  for(geo_type in c("state", "county")){
+  n_ahead_list = 10:30##round(seq(from=10, to=30, length=nn))
   auc_list = list()
   for(ii in 1:length(n_ahead_list)){
     n_ahead = n_ahead_list[ii]
-    load(file = file.path(outputdir, paste0(geo_type, "_auc_n_ahead", n_ahead, ".Rdata")))
+    load(file = file.path(outputdir, paste0(geo_type, "_auc_n_ahead", n_ahead, ".Rdata")), verbose = TRUE)
     auc_list[[ii]] = auc_df
   }
-
-  ## pdf(width=16, height=4, file=file.path(outputdir, paste0("auc-by-nahead-", geo_type, ".pdf")))
-  png(width=15, height=4, units="in",
-      file=file.path(outputdir, paste0("auc-by-nahead-", geo_type, ".png")),
-      res = 300)
-
-  par(mfrow=c(1,5))
+  par(mfrow=c(1,4))
+  par(oma = c(0,0,2,0))
 
   ## Plot the difference
-  n_ahead_list = 11:30##round(seq(from=10, to=30, length=nn))
+  n_ahead_list = 10:30##round(seq(from=10, to=30, length=nn))
   ## n_ahead_list = 10:19##round(seq(from=10, to=30, length=nn))
   auc_mat = do.call(rbind, lapply(auc_list, function(a){ unlist(a[,3] - a[,2])}))
   auc_mat %>% matplot(x=n_ahead_list, lwd=c(2,1,2,2), lty=c(1,2,1,1), type='l', xlab="n_ahead")
     abline(h=seq(from=0.1,to=1, by=0.1), col='grey80', lty=2)
-  abline(h=0)
-  legend("topleft", col=1:4, lty=1, legend=c("ridge", "lasso", "svm", "xgb"), bg="white")
-  title(main=paste0("AUC(FB) - AUC(no FB),\n", geo_type, " level data"))
+  abline(h=0, col='grey80', lwd=2)
+  legend("topleft", col=1:4, lty=1, legend=c("lasso", "ridge", "svm", "xgb"))
+  title(main="AUC(yes FB) - AUC(no FB)")
 
   ## Plot the two lines superimposed
   yes_fb = do.call(rbind, lapply(auc_list, function(a){ a[,3] %>% unlist()}))
+
   no_fb = do.call(rbind, lapply(auc_list, function(a){ a[,2] %>% unlist() }))
-  plot_names = paste0("ROC AUC\n ", c("ridge", "lasso", "svm", "xgb"))
-  for(ii in 1:4){
-    matplot(y=cbind(yes_fb[,ii], no_fb[,ii]),
-            x=n_ahead_list,
-            col=ii, lwd=3, lty=c(1,2), ylim=c(0.5,1), type='l')
-    legend("bottomleft", col=ii, lwd=2, lty=c(1,2), legend=c("With FB", "Without FB"))
-    title(main=plot_names[ii])
+  plot_names = paste0("AUC, ", c("lasso", "ridge",  "xgb"))
+  for(ii in 1:length(plot_names)){
+    matplot(y=cbind(yes_fb[,ii], no_fb[,ii]), x=n_ahead_list, col=ii, lwd=3, lty=c(1,2), ylim=c(0.5,1), type='l',
+            ylab = "AUC", xlab="n_ahead")
     abline(h=seq(from=0.1,to=1, by=0.1), col='grey80', lty=2)
+    legend("topright", col=ii, lwd=2, lty=c(1,2), legend=c("With FB", "Without FB"), bg="white")
+    title(main=plot_names[ii])
   }
-  graphics.off()
+  mtext(outer=TRUE, text=bquote(bold(.(toupper(geo_type)))), side=3)
+  }
 
 }

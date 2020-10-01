@@ -208,12 +208,66 @@ for(iseed in 0:4){
 }
 ```
 
-Next up: Choosing a summary statistic to measure the *advantage* in performance
-using Facebook data, we'll calculate *difference* in the area under the curve
-(AUC) between the two versions, for each classifier, as a function of **how far
-ahead hotspots are defined as** i.e. for a range of `n_ahead`, in $\{10, \cdots,
-30\}$.
+## AUC vs how far ahead
 
+For a summary statistic to measure the *advantage* in performance using Facebook
+data, we'll calculate **difference** in the area under the curve (AUC) between
+the two versions, for each classifier, as a function of **how far ahead hotspots
+are defined as** i.e. for a range of `n_ahead`, in $\{10, \cdots, 30\}$. 
+
+(This is the variable `n_ahead` in the code.)
+
+All AUCs are calculated as an average over five random seeds for
+train/validation and CV fold splits.
+
+From the following plots, we notice that:
+
+* The difference in AUC is consistently positive, in all cases.
+
+* AUC decreases when `n_ahead` increases, which makes sense.
+
+* The advantage is larger at the state level than at the county level.
+
+* At the county level, xgboost (the green line) seems to do better than lasso or
+  ridge, and also seems to have a larger advantage
+
+```{r auc-vs-n-ahead, eval=TRUE, fig.width=12, fig.height=4}
+for(geo_type in c("state", "county")){
+  n_ahead_list = 10:30
+  auc_list = list()
+  for(ii in 1:length(n_ahead_list)){
+    n_ahead = n_ahead_list[ii]
+    load(file = file.path(outputdir, paste0(geo_type, "_auc_n_ahead", n_ahead, ".Rdata")), verbose = FALSE)
+    auc_list[[ii]] = auc_df
+  }
+
+  par(mfrow=c(1,4))
+  par(oma = c(0,0,2,0))
+
+  ## Plot the difference
+  n_ahead_list = 10:30
+  auc_mat = do.call(rbind, lapply(auc_list, function(a){ unlist(a[,3] - a[,2])}))
+  auc_mat %>% matplot(x=n_ahead_list, lwd=c(2,1,2,2), lty=c(1,2,1,1), type='l', xlab="n_ahead")
+    abline(h=seq(from=0.1,to=1, by=0.1), col='grey80', lty=2)
+  abline(h=0, col='grey80', lwd=2)
+  legend("topleft", col=1:4, lty=1, legend=c("lasso", "ridge", "svm", "xgb"))
+  title(main="AUC(yes FB) - AUC(no FB)")
+
+  ## Plot the two lines superimposed
+  yes_fb = do.call(rbind, lapply(auc_list, function(a){ a[,3] %>% unlist()}))
+
+  no_fb = do.call(rbind, lapply(auc_list, function(a){ a[,2] %>% unlist() }))
+  plot_names = paste0("AUC, ", c("lasso", "ridge",  "xgb"))
+  for(ii in 1:length(plot_names)){
+    matplot(y=cbind(yes_fb[,ii], no_fb[,ii]), x=n_ahead_list, col=ii, lwd=3, lty=c(1,2), ylim=c(0.5,1), type='l',
+            ylab = "AUC", xlab="n_ahead")
+    abline(h=seq(from=0.1,to=1, by=0.1), col='grey80', lty=2)
+    legend("topright", col=ii, lwd=2, lty=c(1,2), legend=c("With FB", "Without FB"), bg="white")
+    title(main=plot_names[ii])
+  }
+  mtext(outer=TRUE, text=bquote(bold(.(toupper(geo_type)))), side=3)
+}
+```
 
 ## Extra: diagnostics
 
