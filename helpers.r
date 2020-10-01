@@ -550,6 +550,7 @@ make_foldid <- function(x, nfold){
 ##' @param response string just for rendering plots later on
 ##' @return
 fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "confirmed_7dav_incidence_num",
+                               foldid = NULL,
                                geo_cv_split_seed = NULL,
                                stratify_cv_split = TRUE,
                                verbose = FALSE){
@@ -559,7 +560,9 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   
   if(verbose) cat("\tFitting LASSO...")
   suppressMessages({
-    preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1, geo_cv_split_seed = geo_cv_split_seed,
+    preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 1,
+                                     foldid = foldid,
+                                     geo_cv_split_seed = geo_cv_split_seed,
                                      stratify_cv_split = stratify_cv_split)
   })
   predictions[[paste("lasso_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
@@ -570,7 +573,9 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
   
   if(verbose) cat("\tFitting Ridge...")
   suppressMessages({
-    preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0, geo_cv_split_seed = geo_cv_split_seed,
+    preds <- fit_logistic_regression(df_train, df_test, nfold = 5, alpha = 0,
+                                     foldid = foldid,
+                                     geo_cv_split_seed = geo_cv_split_seed,
                                      stratify_cv_split = stratify_cv_split)
   })
   predictions[[paste("ridge_lags", lags, "_nahead", n_ahead, sep = "")]] = preds
@@ -618,6 +623,7 @@ fit_predict_models <- function(df_train, df_test, lags, n_ahead, response = "con
 ##'
 ##' @return Numeric vector the same length as \code{nrow(df_test)}.
 fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1,
+                                    foldid = NULL,
                                     geo_cv_split_seed = NULL,
                                     stratify_cv_split = TRUE){
   
@@ -632,13 +638,18 @@ fit_logistic_regression <- function(df_train, df_test, nfold = 5, alpha = 1,
   ## foldid <- make_foldid(df_train, nfold)
   
   ## Split by geo
-  if(stratify_cv_split){
-    foldid <- make_stratified_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
+  if(!is.null(foldid)){
+    if(stratify_cv_split){
+      foldid <- make_stratified_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
+    } else {
+      foldid <- make_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
+    }
   } else {
-    foldid <- make_foldid_geo(df_train, nfold, seed = geo_cv_split_seed)
+    stopifnot(all(foldid %in% 1:nfold))
   }
-  
-  ## Main part of the lasso fitting and predicting
+  stopifnot(length(foldid) == nrow(df_train))
+
+  ## Main part of the lasso fitting and predicting (todo: use quantile lasso's forward-looking CV functionality)
   fit_lasso <- cv.glmnet(x = as.matrix(df_train %>% select(-geo_value, -time_value, -resp)),
                          y = df_train$resp,
                          family = "binomial",
@@ -1076,6 +1087,7 @@ make_plots <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
 ##' @return
 calc_auc <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
                      fn_response_name, threshold, slope,  onset,
+                     foldid = NULL,
                      geo_cv_split_seed = NULL){
   
   ######################################
@@ -1084,16 +1096,21 @@ calc_auc <- function(destin = "figures", splitted, lags, n_ahead, geo_type,
   predictions_onlylaggedresponse <- fit_predict_models(splitted$df_train %>% select(geo_value, time_value, resp, contains(response)),
                                                        splitted$df_test %>% select(geo_value, time_value, resp, contains(response)),
                                                        lags = lags, n_ahead = n_ahead,
+                                                       foldid = foldid,
                                                        geo_cv_split_seed = geo_cv_split_seed,
-                                                       verbose=TRUE)
+                                                       verbose = TRUE)
   df_auc_no_fb = plot_roc(predictions_onlylaggedresponse, geo_type = geo_type, popweighted = FALSE, only_return_auc = TRUE)
   
   ####################################################
   ## Model with lagged responses + facebook signals ##
   ####################################################
-  predictions_laggedandfacebook <- fit_predict_models(splitted$df_train, splitted$df_test, lags = lags, n_ahead = n_ahead,
-                                                      geo_cv_split_seed = geo_cv_split_seed)
-  df_auc_yes_fb = plot_roc(predictions_laggedandfacebook, geo_type = geo_type, popweighted = FALSE, only_return_auc = TRUE)
+  predictions_laggedandfacebook <-
+    fit_predict_models(splitted$df_train, splitted$df_test, lags = lags, n_ahead = n_ahead,
+                       foldid = foldid, geo_cv_split_seed = geo_cv_split_seed)
+  df_auc_yes_fb = plot_roc(predictions_laggedandfacebook,
+                           geo_type = geo_type,
+                           popweighted = FALSE,
+                           only_return_auc = TRUE)
   
   ## column_names = paste0(c("no_fb", "yes_fb"), paste0("_n_ahead", n_ahead))
   column_names = c("no_fb", "yes_fb")
@@ -1114,8 +1131,10 @@ get_data <- function(geo_type = "state", lags = 28, n_ahead = 28, threshold = 0.
                      start_day = as.Date("2020-05-01"),
                      end_day = as.Date("2020-08-30")
 ){
-  
-  ## Read in data once
+
+  ########################
+  ## Read in data once ###
+  ########################
   data_sources = c("indicator-combination",
                    "fb-survey")
   signals = c("confirmed_7dav_incidence_prop",
@@ -1128,18 +1147,20 @@ get_data <- function(geo_type = "state", lags = 28, n_ahead = 28, threshold = 0.
   })
   mat <- mat %>% select(geo_value, time_value, signal, data_source, value)
   
-  
-  ## only includes counties that have at most 5% of missing fb survey signals
-  ########################################
-  mat$time_value <- as.Date(tempmat$time_value)
+
+  ##############################################################################
+  ## only includes counties that have at most 5% of missing fb survey signals ##
+  ##############################################################################
+  mat$time_value <- as.Date(mat$time_value)
   geo_pct_missing <- mat %>% filter(data_source == 'fb-survey') %>% plyr::ddply("geo_value", function(df){
     data.frame(prop_missing = 1 - length(df$time_value)/as.numeric(maxdate - mindate + 1))
   })
   geo_include <- geo_pct_missing %>% filter(prop_missing <= 0.05) %>% select(geo_value) %>% unlist()
   mat <- mat %>% filter(geo_value %in% geo_include)
-  ########################################
-  
-  ## Form the y|X matrix
+
+  ##########################
+  ## Form the y|X matrix ###
+  ##########################
   df_model <- ready_to_model(mat, lags, n_ahead, response, slope, fn_response, threshold, onset)
   return(list(mat = mat,
               df_model = df_model,
@@ -1154,4 +1175,71 @@ get_data <- function(geo_type = "state", lags = 28, n_ahead = 28, threshold = 0.
               onset = onset,
               start_day = start_day,
               end_day = end_day))
+}
+
+
+
+
+##' Renumber any collection of (1,..,6) e.g. (4,4,2,2,3,3,3,1,6,6,6) to
+##' (1,1,2,2,3,3,3,4,5,5,5).
+##'
+##' @param foldid CV Fold IDs.
+##' @param nfold Original number of folds intended
+##'
+##' @return Renumbered integer vector of the same length.
+renumber_foldid <- function(foldid, nfold){
+
+  ## Basic check
+  ## foldid = c(1,1,1,4,4,4,2,2,2,3,3,3,6,6,6)
+  stopifnot(all(foldid %in% 1:(nfold+1)))
+
+  ## Renumber foldid
+  renumbered_foldid = foldid
+  all_ids = unique(foldid)
+  for(ii in 1:length(all_ids)){
+    old_id = all_ids[ii]
+    renumbered_foldid[which(foldid == old_id)] = ii
+    ## print(paste0("Changing ", old_id))
+    ## print(renumbered_foldid)
+  }
+
+  ## Basic checks before returning
+  stopifnot(length(renumbered_foldid) == length(foldid))
+  stopifnot(all(renumbered_foldid %in% 1:nfold))
+  return(renumbered_foldid)
+}
+
+
+
+##' Creates (nfold) splits, and one at a time, designates one fold as test data,
+##' and the rest as training data.
+##'
+##' @param df_model Data matrix.
+##'
+##' @param nfold How many splits to make
+##'
+##' @return A (nfold) lengthed list containing the splitted training/test data
+##'   sets from \code{df_model}.
+##'
+outer_split <- function(df_model, nfold = 4){
+  foldid = make_stratified_foldid_geo(df_model, nfold)
+  splitted_list <- list()
+  foldid_list <- list()
+  for(ifold in 1:(nfold+1)){
+
+    ## Form splitted data
+    splitted = list(df_test = df_model[which(foldid == ifold), ],
+                    df_train = df_model[which(foldid != ifold), ])
+
+    ## ## Artificially form CV fold splits
+    ## foldid_new = foldid[which(foldid != ifold)]  %>% renumber_foldid(nfold)
+    ## stopifnot(length(foldid_new) == nrow(splitted$df_train))
+
+    ## Save the results
+    splitted_list[[ifold]] = splitted
+    ## foldid_list[[ifold]] = foldid_new
+  }
+  ## return(list(foldid_list = foldid_list,
+  ##             splitted_list = splitted_list))
+  return(splitted_list)
 }
