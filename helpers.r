@@ -1223,23 +1223,10 @@ renumber_foldid <- function(foldid, nfold){
 ##'
 outer_split <- function(df_model, nfold = 4){
   foldid = make_stratified_foldid_geo(df_model, nfold)
-  splitted_list <- list()
-  foldid_list <- list()
-  for(ifold in 1:(nfold+1)){
-
-    ## Form splitted data
+  splitted_list <- lapply(1:nfold, function(ifold){
     splitted = list(df_test = df_model[which(foldid == ifold), ],
                     df_train = df_model[which(foldid != ifold), ])
-
-    ## ## Artificially form CV fold splits
-    ## foldid_new = foldid[which(foldid != ifold)]  %>% renumber_foldid(nfold)
-    ## stopifnot(length(foldid_new) == nrow(splitted$df_train))
-
-    ## Save the results
-    splitted_list[[ifold]] = splitted
-    ## foldid_list[[ifold]] = foldid_new
-  }
-  ## return(list(foldid_list = foldid_list,
-  ##             splitted_list = splitted_list))
+    return(splitted)
+  })
   return(splitted_list)
 }
