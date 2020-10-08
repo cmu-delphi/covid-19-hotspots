@@ -1153,7 +1153,7 @@ get_data <- function(geo_type = "state", lags = 28, n_ahead = 28, threshold = 0.
   ##############################################################################
   mat$time_value <- as.Date(mat$time_value)
   geo_pct_missing <- mat %>% filter(data_source == 'fb-survey') %>% plyr::ddply("geo_value", function(df){
-    data.frame(prop_missing = 1 - length(df$time_value)/as.numeric(maxdate - mindate + 1))
+    data.frame(prop_missing = 1 - length(df$time_value)/as.numeric(start_day - end_day + 1))
   })
   geo_include <- geo_pct_missing %>% filter(prop_missing <= 0.05) %>% select(geo_value) %>% unlist()
   mat <- mat %>% filter(geo_value %in% geo_include)
